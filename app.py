@@ -4805,48 +4805,69 @@ def update_queue_patient(queue_id, patient):
 
 def create_days_supply_consult_pdf(patient):
     """
-    สร้าง Consult PDF ใบเดียว รวม:
-    1) Days Supply
-    2) Drug Interaction
-
-    ไม่รวม Stock ใน Consult PDF
+    สร้าง Consult PDF จากข้อมูล patient ของ HN เดียวโดยตรง
+    รวมข้อมูลผู้ป่วย + รายการยาทั้งหมด + Days Supply + Drug Interaction
     """
     try:
-        hn = str(patient.get("hn", "")).strip()
-        patient_name = patient.get("name", "")
-        age = patient.get("age", "")
-        dispense_date = patient.get("dispense_date", "") or "ไม่ได้ระบุ"
-        appointment_date = patient.get("appointment_date", "") or "ไม่ได้ระบุ"
-        required_days = patient.get("required_days", 0)
+        # --------------------------------------------------------
+        # 1) เตรียมข้อมูลผู้ป่วยจาก patient โดยตรง
+        # --------------------------------------------------------
+        hn = str(patient.get("hn", "") or "").strip()
+        patient_name = str(patient.get("name", "") or "").strip() or "ไม่ได้ระบุ"
+        age = str(patient.get("age", "") or "").strip() or "ไม่ได้ระบุ"
 
-        # ตรวจ Interaction จากรายการยาจริงของ HN ใหม่ทุกครั้งก่อนสร้าง PDF
-        direct_drug_names = [
+        dispense_date = str(
+            patient.get("dispense_date", "")
+            or patient.get("dispense_date_raw", "")
+            or "ไม่ได้ระบุ"
+        ).strip()
+        appointment_date = str(
+            patient.get("appointment_date", "")
+            or patient.get("appointment_date_raw", "")
+            or "ไม่ได้ระบุ"
+        ).strip()
+
+        # คำนวณใหม่จากวันที่ของ HN นี้ เพื่อไม่ใช้ค่าค้างจากผู้ป่วยคนอื่น
+        calculate_days_check(patient)
+        required_days = patient.get("required_days", 0) or 0
+
+        medicines = list(patient.get("medicines", []) or [])
+        if not medicines:
+            raise ValueError("ไม่พบรายการยาใน patient ของ HN {}".format(hn))
+
+        # --------------------------------------------------------
+        # 2) ตรวจ Interaction จากยาของ HN นี้โดยตรง
+        # --------------------------------------------------------
+        drug_names = [
             str(m.get("name", "") or "").strip()
-            for m in (patient.get("medicines", []) or [])
+            for m in medicines
             if str(m.get("name", "") or "").strip()
             and str(m.get("name", "") or "").strip() != "ไม่ได้ระบุ"
         ]
-        if len(direct_drug_names) >= 2:
-            interactions = check_drug_interactions(direct_drug_names)
-        else:
+        interactions = check_drug_interactions(drug_names) if len(drug_names) >= 2 else []
+        if not interactions:
             interactions = patient.get("interaction_results", []) or []
         patient["interaction_results"] = interactions
 
-        has_days_problem = bool(patient.get("days_supply_has_problem", False))
+        has_days_problem = bool(
+            patient.get("days_supply_has_problem", False)
+            or patient.get("days_check_required", False)
+        )
         has_interaction = bool(interactions)
 
         if not has_days_problem and not has_interaction:
             return None
 
+        # --------------------------------------------------------
+        # 3) สร้าง PDF ใหม่ทุกครั้งจาก patient ล่าสุด
+        # --------------------------------------------------------
         filename = "Medication_Consult_HN_{}_{}.pdf".format(
             hn.replace(" ", "_"),
             datetime.now().strftime("%Y%m%d_%H%M%S")
         )
-
         pdf_path = os.path.join(CONSULT_FOLDER, filename)
 
         normal_font, bold_font = register_thai_fonts()
-
         pdf = canvas.Canvas(pdf_path, pagesize=A4)
         width, height = A4
         y = height - 50
@@ -4857,326 +4878,208 @@ def create_days_supply_consult_pdf(patient):
                 return height - 50
             return current_y
 
-        def draw_red_wrapped(text_line, x=70, font_size=14, leading=18):
+        def draw_line(text, x=60, font=None, size=14, leading=20):
             nonlocal y
             y = page_space(y, 55)
-            pdf.setFillColorRGB(1, 0, 0)
-            y = draw_wrapped_text(
-                pdf,
-                text_line,
-                x,
-                y,
-                70,
-                bold_font,
-                font_size,
-                leading
-            )
-            pdf.setFillColorRGB(0, 0, 0)
+            pdf.setFont(font or normal_font, size)
+            y = draw_wrapped_text(pdf, str(text), x, y, 75,
+                                  font or normal_font, size, leading)
 
-        # ========================================================
+        def fmt(v, default="ไม่ได้ระบุ"):
+            if v is None or str(v).strip() == "":
+                return default
+            return format_quantity(v) if isinstance(v, (int, float)) else str(v)
+
+        # --------------------------------------------------------
         # HEADER
-        # ========================================================
+        # --------------------------------------------------------
         pdf.setFillColorRGB(0, 0, 0)
         pdf.setFont(bold_font, 22)
         pdf.drawCentredString(width / 2, y, "MEDICATION CONSULT")
-
         y -= 30
         pdf.setFont(bold_font, 17)
-
         if has_days_problem and has_interaction:
             subtitle = "บันทึกปรึกษาปัญหา Days Supply และ Drug Interaction"
         elif has_interaction:
             subtitle = "บันทึกปรึกษาปัญหายาระหว่างยา (Drug Interaction)"
         else:
             subtitle = "บันทึกปรึกษาความสัมพันธ์ระหว่างจำนวนยาและวันนัด"
-
         pdf.drawCentredString(width / 2, y, subtitle)
         y -= 40
 
-        # ========================================================
-        # PATIENT INFORMATION
-        # ========================================================
+        # --------------------------------------------------------
+        # PATIENT INFORMATION - ต้องใช้ค่าจริงจาก patient
+        # --------------------------------------------------------
         for label, value in [
-            ("HN", hn),
-            ("ชื่อผู้ป่วย", patient_name or "ไม่ได้ระบุ"),
-            ("อายุ", age or "ไม่ได้ระบุ"),
+            ("HN", hn or "ไม่ได้ระบุ"),
+            ("ชื่อผู้ป่วย", patient_name),
+            ("อายุ", age),
             ("วันที่จ่ายยา", dispense_date),
             ("วันนัด", appointment_date),
-            ("จำนวนวันที่ต้องใช้", format_quantity(required_days) + " วัน")
+            ("จำนวนวันที่ต้องใช้", "{} วัน".format(fmt(required_days)))
         ]:
-            y = page_space(y, 70)
-            y = draw_wrapped_text(
-                pdf,
-                "{}: {}".format(label, value),
-                60,
-                y,
-                75,
-                normal_font,
-                14,
-                19
-            )
+            draw_line("{}: {}".format(label, value))
 
-        # ========================================================
-        # DAYS SUPPLY
-        # ========================================================
+        # --------------------------------------------------------
+        # DAYS SUPPLY - แสดงยาทุกตัวของ HN ไม่ใช่เฉพาะตัวที่ผิด
+        # --------------------------------------------------------
         if has_days_problem:
             y -= 15
             y = page_space(y, 100)
-            pdf.setFillColorRGB(0, 0, 0)
             pdf.setFont(bold_font, 17)
             pdf.drawString(50, y, "1. DAYS SUPPLY")
             y -= 28
 
-            problem_items = [
-                item for item in patient.get("days_check_results", [])
-                if item.get("decision") in {"increase", "decrease", "consult"}
-            ]
+            # ใช้ผลคำนวณล่าสุด จับคู่ด้วยชื่อยา
+            results = patient.get("days_check_results", []) or []
+            result_by_name = {
+                str(r.get("name", "") or "").strip().lower(): r
+                for r in results
+            }
 
-            for index, item in enumerate(problem_items):
-                y = page_space(y, 160)
+            for index, medicine in enumerate(medicines, start=1):
+                y = page_space(y, 180)
+                name = str(medicine.get("name", "") or "").strip() or "ไม่ได้ระบุ"
+                key = name.lower()
+                item = result_by_name.get(key, {})
 
-                pdf.setFillColorRGB(0, 0, 0)
-                pdf.setFont(bold_font, 16)
-                pdf.drawString(
-                    60,
-                    y,
-                    "รายการยา {}: {}".format(
-                        index + 1,
-                        item.get("name", "")
-                    )
-                )
-                y -= 24
-
-                fields = [
-                    "ขนาดยา: {}".format(
-                        item.get("strength", "ไม่ได้ระบุ") or "ไม่ได้ระบุ"
-                    ),
-                    "ครั้งต่อวัน: {} ครั้ง".format(
-                        item.get("times_per_day", "ไม่ได้ระบุ")
-                    ),
-                    "จำนวนวันที่ต้องใช้: {} วัน".format(
-                        format_quantity(item.get("required_days", 0))
-                    ),
-                    "จำนวนยาที่สั่ง: {} เม็ด".format(
-                        format_quantity(item.get("quantity", 0))
-                    ),
-                    "จำนวนยาที่ควรเป็น: {} เม็ด".format(
-                        format_quantity(item.get("expected_quantity", 0))
-                    ),
-                ]
-
+                # ถ้าไม่มีผลใน days_check_results ให้คำนวณจาก medicine โดยตรง
+                strength = str(medicine.get("strength", "") or "").strip() or "ไม่ได้ระบุ"
+                times = item.get("times_per_day", medicine.get("times_per_day", ""))
+                qty = item.get("quantity", medicine.get("quantity", 0))
+                item_required_days = item.get("required_days", required_days)
+                expected = item.get("expected_quantity", None)
                 missing = item.get("missing_quantity", 0) or 0
                 excess = item.get("excess_quantity", 0) or 0
+                status = item.get("status", "") or medicine.get("status", "") or "คำนวณไม่ได้"
 
-                if float(missing) > 0:
-                    fields.append(
-                        "*** ขาด {} เม็ด ***".format(format_quantity(missing))
-                    )
-                elif float(excess) > 0:
-                    fields.append(
-                        "*** เกิน {} เม็ด ***".format(format_quantity(excess))
-                    )
+                try:
+                    times_num = float(times or 0)
+                    req_num = float(item_required_days or 0)
+                    qty_num = float(qty or 0)
+                    if expected is None and times_num > 0 and req_num > 0:
+                        expected = req_num * times_num
+                    if expected is None:
+                        expected = 0
+                    if not missing and qty_num < float(expected):
+                        missing = float(expected) - qty_num
+                    if not excess and qty_num > float(expected):
+                        excess = qty_num - float(expected)
+                except Exception:
+                    expected = expected if expected is not None else 0
+
+                pdf.setFont(bold_font, 16)
+                pdf.setFillColorRGB(0, 0, 0)
+                pdf.drawString(60, y, "รายการยา {}: {}".format(index, name))
+                y -= 24
+
+                draw_line("ขนาดยา: {}".format(strength), 70)
+                draw_line("ครั้งต่อวัน: {} ครั้ง".format(fmt(times)), 70)
+                draw_line("จำนวนวันที่ต้องใช้: {} วัน".format(fmt(item_required_days)), 70)
+                draw_line("จำนวนยาที่สั่ง: {} เม็ด".format(fmt(qty, "0")), 70)
+                draw_line("จำนวนยาที่ควรเป็น: {} เม็ด".format(fmt(expected, "0")), 70)
+
+                if float(missing or 0) > 0:
+                    pdf.setFillColorRGB(1, 0, 0)
+                    draw_line("ขาด {} เม็ด".format(fmt(missing, "0")), 70, bold_font)
+                    pdf.setFillColorRGB(0, 0, 0)
+                elif float(excess or 0) > 0:
+                    pdf.setFillColorRGB(1, 0, 0)
+                    draw_line("เกิน {} เม็ด".format(fmt(excess, "0")), 70, bold_font)
+                    pdf.setFillColorRGB(0, 0, 0)
                 else:
-                    fields.append(
-                        "ผลการตรวจ: {}".format(
-                            item.get("status", "คำนวณไม่ได้")
-                        )
-                    )
+                    draw_line("ผลการตรวจ: {}".format(status), 70)
 
-                for field in fields:
-                    if "***" in field:
-                        draw_red_wrapped(field)
-                    else:
-                        y = page_space(y, 55)
-                        pdf.setFillColorRGB(0, 0, 0)
-                        y = draw_wrapped_text(
-                            pdf,
-                            field,
-                            70,
-                            y,
-                            70,
-                            normal_font,
-                            14,
-                            18
-                        )
+                y -= 8
 
-                y -= 10
-
-        # ========================================================
+        # --------------------------------------------------------
         # DRUG INTERACTION
-        # ========================================================
+        # --------------------------------------------------------
         if has_interaction:
             y -= 15
             y = page_space(y, 150)
-            pdf.setFillColorRGB(0, 0, 0)
             pdf.setFont(bold_font, 17)
-
             section_no = "2" if has_days_problem else "1"
             pdf.drawString(50, y, "{}. DRUG INTERACTION".format(section_no))
             y -= 28
 
-            for index, interaction in enumerate(interactions):
+            for index, interaction in enumerate(interactions, start=1):
                 y = page_space(y, 180)
-
                 drug1 = interaction.get("Drug_1", interaction.get("drug1", ""))
                 drug2 = interaction.get("Drug_2", interaction.get("drug2", ""))
                 risk = interaction.get("Risk", interaction.get("risk", ""))
                 severity = interaction.get("Severity", interaction.get("severity", ""))
-                summary = interaction.get(
-                    "Summary",
-                    interaction.get("summary", interaction.get("Description", ""))
-                )
-                management = interaction.get(
-                    "Management",
-                    interaction.get("management", "")
-                )
-                reference = interaction.get(
-                    "Reference",
-                    interaction.get("reference", "")
-                )
+                summary = interaction.get("Summary", interaction.get("summary", interaction.get("Description", "")))
+                management = interaction.get("Management", interaction.get("management", ""))
+                reference = interaction.get("Reference", interaction.get("reference", ""))
 
-                pdf.setFillColorRGB(0, 0, 0)
                 pdf.setFont(bold_font, 15)
-                pdf.drawString(
-                    60,
-                    y,
-                    "Interaction {}".format(index + 1)
-                )
+                pdf.setFillColorRGB(0, 0, 0)
+                pdf.drawString(60, y, "Interaction {}".format(index))
                 y -= 24
 
-                # แสดงข้อมูลยาที่ชนกันใน Consult PDF ให้เห็นชัดเจน
-                # ข้อมูลส่วนนี้มาจากผลที่ Prolog ส่งกลับมา
-                draw_red_wrapped(
-                    "*** ยาที่มีปฏิกิริยาระหว่างกัน: {} ↔ {} ***".format(
-                        drug1 or "ไม่ได้ระบุ",
-                        drug2 or "ไม่ได้ระบุ"
-                    )
-                )
-
-                # เน้นข้อมูลที่ได้จาก Prolog
+                pdf.setFillColorRGB(1, 0, 0)
+                draw_line("ยาที่มีปฏิกิริยาระหว่างกัน: {} ↔ {}".format(
+                    drug1 or "ไม่ได้ระบุ", drug2 or "ไม่ได้ระบุ"), 70, bold_font)
                 if risk:
-                    draw_red_wrapped("*** Risk: {} ***".format(risk))
-
+                    draw_line("Risk: {}".format(risk), 70, bold_font)
                 if severity:
-                    draw_red_wrapped("*** Severity: {} ***".format(severity))
-
+                    draw_line("Severity: {}".format(severity), 70, bold_font)
+                pdf.setFillColorRGB(0, 0, 0)
                 if summary:
-                    y = page_space(y, 55)
-                    pdf.setFillColorRGB(0, 0, 0)
-                    y = draw_wrapped_text(
-                        pdf,
-                        "Clinical Significance: {}".format(summary),
-                        70,
-                        y,
-                        70,
-                        normal_font,
-                        14,
-                        18
-                    )
-
+                    draw_line("Clinical Significance: {}".format(summary), 70)
                 if management:
-                    y = page_space(y, 55)
-                    pdf.setFillColorRGB(0, 0, 0)
-                    y = draw_wrapped_text(
-                        pdf,
-                        "Management: {}".format(management),
-                        70,
-                        y,
-                        70,
-                        normal_font,
-                        14,
-                        18
-                    )
-
+                    draw_line("Management: {}".format(management), 70)
                 if reference:
-                    y = page_space(y, 55)
-                    pdf.setFillColorRGB(0, 0, 0)
-                    y = draw_wrapped_text(
-                        pdf,
-                        "Reference: {}".format(reference),
-                        70,
-                        y,
-                        70,
-                        normal_font,
-                        14,
-                        18
-                    )
-
+                    draw_line("Reference: {}".format(reference), 70)
                 y -= 12
 
-        # ========================================================
+        # --------------------------------------------------------
         # DOCTOR OPINION
-        # ========================================================
+        # --------------------------------------------------------
         y -= 10
         y = page_space(y, 190)
-        pdf.setFillColorRGB(0, 0, 0)
         pdf.setFont(bold_font, 17)
-
         section_no = 3 if (has_days_problem and has_interaction) else 2
         pdf.drawString(50, y, "{}. ความเห็นแพทย์".format(section_no))
         y -= 30
-        pdf.setFont(normal_font, 14)
 
         opinion_lines = []
-
         if has_days_problem:
             opinion_lines.extend([
                 "☐ เพิ่มจำนวนยาให้ครบตามจำนวนที่ขาด",
                 "☐ ลดจำนวนยาในส่วนที่เกิน",
                 "☐ เห็นควรจ่ายตามจำนวนเดิม",
             ])
-
         if has_interaction:
             opinion_lines.extend([
                 "☐ เห็นควรจ่ายยาตามเดิม",
                 "☐ ปรับเปลี่ยน/หยุดยาที่มีปฏิกิริยาระหว่างกัน",
                 "☐ ติดตามอาการหรือผลตรวจทางห้องปฏิบัติการเพิ่มเติม",
             ])
-
-        opinion_lines.append(
-            "☐ อื่น ๆ: ________________________________________________"
-        )
+        opinion_lines.append("☐ อื่น ๆ: ________________________________________________")
 
         for text_line in opinion_lines:
-            y = page_space(y, 60)
-            pdf.setFillColorRGB(0, 0, 0)
-            y = draw_wrapped_text(
-                pdf,
-                text_line,
-                65,
-                y,
-                70,
-                normal_font,
-                14,
-                22
-            )
+            draw_line(text_line, 65)
 
         y -= 15
-        pdf.setFont(normal_font, 14)
-
         for text_line in [
             "แพทย์ผู้พิจารณา: ______________________________",
             "วันที่: _________________________________________",
             "หมายเหตุ: _____________________________________"
         ]:
             y = page_space(y, 50)
+            pdf.setFont(normal_font, 14)
             pdf.drawString(65, y, text_line)
             y -= 25
 
         pdf.setFillColorRGB(0, 0, 0)
         pdf.setFont(normal_font, 9)
-        pdf.drawCentredString(
-            width / 2,
-            25,
-            "ระบบ Medication Management / Clinical Decision Support"
-        )
-
+        pdf.drawCentredString(width / 2, 25,
+                              "ระบบ Medication Management / Clinical Decision Support")
         pdf.save()
 
-        if not os.path.exists(pdf_path):
-            return None
-
-        return filename
+        return filename if os.path.exists(pdf_path) else None
 
     except Exception as e:
         print("ERROR CREATE MEDICATION CONSULT PDF:", repr(e))
