@@ -1,0 +1,566 @@
+```html
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>ยืนยันแทนแพทย์</title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f7fb;
+            margin: 0;
+            padding: 30px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: auto;
+        }
+
+        .card {
+            background: white;
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        }
+
+        h1 {
+            margin-top: 0;
+        }
+
+        h2 {
+            margin-top: 30px;
+        }
+
+        h3 {
+            margin-top: 0;
+        }
+
+        .warning {
+            background: #fff3f3;
+            border: 2px solid #e53935;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 25px;
+        }
+
+        .warning strong {
+            color: #c62828;
+        }
+
+        .patient-box {
+            background: #f7f9fc;
+            border: 1px solid #e0e0e0;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 25px;
+        }
+
+        .patient-box p {
+            margin: 8px 0;
+        }
+
+        .option {
+            border: 1px solid #ddd;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+
+        .interaction {
+            background: #fff8e1;
+            border: 1px solid #ffcc80;
+        }
+
+        .medicine-item {
+            background: #fafafa;
+            border: 1px solid #e0e0e0;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        .green {
+            background: #16803c;
+            color: white;
+        }
+
+        .purple {
+            background: #7b1fa2;
+            color: white;
+        }
+
+        .red {
+            background: #c62828;
+            color: white;
+        }
+
+        select {
+            padding: 10px;
+            width: 100%;
+            font-size: 16px;
+            margin: 10px 0 15px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+        }
+
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            border: 1px solid #ef9a9a;
+            font-weight: bold;
+        }
+
+        .back-link {
+            display: inline-block;
+            margin-top: 20px;
+            text-decoration: none;
+            color: #1976d2;
+            font-weight: bold;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+
+        .danger-text {
+            color: #c62828;
+            font-weight: bold;
+        }
+
+        .stock-box {
+            background: #eef6ff;
+            border: 1px solid #90caf9;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+
+        .stock-ok {
+            color: #16803c;
+            font-weight: bold;
+        }
+
+        .stock-bad {
+            color: #c62828;
+            font-weight: bold;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+    <div class="card">
+
+        <!-- ====================================================== -->
+        <!-- HEADER -->
+        <!-- ====================================================== -->
+
+        <h1>
+            👨‍⚕️ ยืนยันแทนแพทย์
+        </h1>
+
+
+        <!-- ====================================================== -->
+        <!-- WARNING -->
+        <!-- ====================================================== -->
+
+        <div class="warning">
+
+            <strong>
+                ⚠️ โหมดทดสอบระบบ
+            </strong>
+
+            <p>
+                หน้านี้จำลองการตัดสินใจแทนแพทย์
+                สำหรับการทดสอบระบบเท่านั้น
+            </p>
+
+            <p>
+                การเลือกยาทดแทนด้านล่างเป็น
+                <strong>ข้อมูลทดสอบ</strong>
+                ไม่ใช่คำแนะนำทางคลินิก
+            </p>
+
+        </div>
+
+
+        <!-- ====================================================== -->
+        <!-- ERROR -->
+        <!-- ====================================================== -->
+
+        {% if error %}
+
+        <div class="error">
+
+            ⚠️ {{ error }}
+
+        </div>
+
+        {% endif %}
+
+
+        <!-- ====================================================== -->
+        <!-- PATIENT -->
+        <!-- ====================================================== -->
+
+        <h2>
+            👤 ผู้ป่วย
+        </h2>
+
+        <div class="patient-box">
+
+            <p>
+                <strong>HN:</strong>
+                {{ patient.hn }}
+            </p>
+
+            <p>
+                <strong>ชื่อ:</strong>
+                {{ patient.name }}
+            </p>
+
+            <p>
+                <strong>อายุ:</strong>
+                {{ patient.age }}
+            </p>
+
+            <p>
+                <strong>วันที่จ่ายยา:</strong>
+                {{ patient.dispense_date }}
+            </p>
+
+            <p>
+                <strong>วันนัด:</strong>
+                {{ patient.appointment_date }}
+            </p>
+
+            <p>
+                <strong>Queue ID:</strong>
+                {{ patient.queue_id }}
+            </p>
+
+        </div>
+
+
+        <!-- ====================================================== -->
+        <!-- INTERACTION -->
+        <!-- ====================================================== -->
+
+        <h2>
+            🚨 Interaction ที่พบ
+        </h2>
+
+        {% for item in patient.interaction_results %}
+
+        <div class="option interaction">
+
+            <strong>
+                {{ item.Drug_1 }}
+                ↔
+                {{ item.Drug_2 }}
+            </strong>
+
+            <p>
+                <strong>Risk:</strong>
+                {{ item.Risk }}
+            </p>
+
+            <p>
+                <strong>Severity:</strong>
+                {{ item.Severity }}
+            </p>
+
+            {% if item.Summary %}
+
+            <p>
+                <strong>รายละเอียด:</strong>
+                {{ item.Summary }}
+            </p>
+
+            {% endif %}
+
+            {% if item.Management %}
+
+            <p>
+                <strong>Management:</strong>
+                {{ item.Management }}
+            </p>
+
+            {% endif %}
+
+        </div>
+
+        {% endfor %}
+
+
+        <!-- ====================================================== -->
+        <!-- MEDICINES -->
+        <!-- ====================================================== -->
+
+        <h2>
+            💊 รายการยา
+        </h2>
+
+        {% for medicine in patient.medicines %}
+
+        <div class="medicine-item">
+
+            <strong>
+                {{ medicine.name }}
+            </strong>
+
+            {% if medicine.strength %}
+                - {{ medicine.strength }}
+            {% endif %}
+
+            <br>
+
+            <small>
+
+                จำนวน:
+                {{ medicine.quantity }}
+
+                |
+
+                {{ medicine.times_per_day }}
+                ครั้ง/วัน
+
+                |
+
+                {{ "%.1f"|format(medicine.days_supply) }}
+                วัน
+
+            </small>
+
+            <br>
+
+            {% if medicine.stock_found %}
+
+                {% if medicine.stock_quantity >= medicine.quantity %}
+
+                <small class="stock-ok">
+                    ✓ Stock มี {{ medicine.stock_quantity }}
+                    ต้องใช้ {{ medicine.quantity }}
+                </small>
+
+                {% else %}
+
+                <small class="stock-bad">
+                    ✗ Stock มี {{ medicine.stock_quantity }}
+                    แต่ต้องใช้ {{ medicine.quantity }}
+                </small>
+
+                {% endif %}
+
+            {% else %}
+
+                <small class="stock-bad">
+                    ✗ ไม่พบยาใน Stock
+                </small>
+
+            {% endif %}
+
+        </div>
+
+        {% endfor %}
+
+
+        <!-- ====================================================== -->
+        <!-- DECISION FORM -->
+        <!-- ====================================================== -->
+
+        <form
+            action="{{ url_for('doctor_decision', queue_id=patient.queue_id) }}"
+            method="POST"
+        >
+
+            <!-- Queue ID -->
+
+            <input
+                type="hidden"
+                name="queue_id"
+                value="{{ patient.queue_id }}"
+            >
+
+
+            <!-- ================================================== -->
+            <!-- OPTION 1 : ORIGINAL -->
+            <!-- ================================================== -->
+
+            <div class="option">
+
+                <h3>
+                    1️⃣ ยืนยันใช้ยาเดิม
+                </h3>
+
+                <p>
+                    ยืนยันให้ผู้ป่วยใช้ยาเดิมตามใบสั่งยา
+                </p>
+
+                <button
+                    class="green"
+                    type="submit"
+                    name="decision"
+                    value="original"
+                    onclick="return confirm('ยืนยันใช้ยาเดิมหรือไม่?');"
+                >
+                    ✅ ยืนยันใช้ยาเดิม
+                </button>
+
+            </div>
+
+
+            <!-- ================================================== -->
+            <!-- OPTION 2 : SUBSTITUTE -->
+            <!-- ================================================== -->
+
+            <div class="option">
+
+                <h3>
+                    2️⃣ เลือกยาทดแทน
+                </h3>
+
+                <p>
+                    เลือกยาทดแทนสำหรับการทดสอบระบบ
+                </p>
+
+                <select
+                    name="substitute_drug"
+                    id="substitute_drug"
+                >
+
+                    <option value="">
+                        -- เลือกยาทดแทน --
+                    </option>
+
+                    {% for drug in substitute_drugs %}
+
+                    <option
+                        value="{{ drug.name }}"
+                    >
+                        {{ drug.name }}
+                        -
+                        {{ drug.strength }}
+                    </option>
+
+                    {% endfor %}
+
+                </select>
+
+                <button
+                    class="purple"
+                    type="submit"
+                    name="decision"
+                    value="substitute"
+                    onclick="return checkSubstitute();"
+                >
+                    🔄 ยืนยันเลือกยาทดแทน
+                </button>
+
+            </div>
+
+
+            <!-- ================================================== -->
+            <!-- OPTION 3 : CANCEL -->
+            <!-- ================================================== -->
+
+            <div class="option">
+
+                <h3>
+                    3️⃣ ยกเลิกการจ่ายยา
+                </h3>
+
+                <p>
+                    ยกเลิกการจ่ายยาให้ผู้ป่วยรายนี้
+                </p>
+
+                <button
+                    class="red"
+                    type="submit"
+                    name="decision"
+                    value="cancel"
+                    onclick="return confirm('ยืนยันยกเลิกการจ่ายยา?');"
+                >
+                    ❌ ยกเลิกการจ่ายยา
+                </button>
+
+            </div>
+
+        </form>
+
+
+        <!-- ====================================================== -->
+        <!-- BACK -->
+        <!-- ====================================================== -->
+
+        <a
+            class="back-link"
+            href="{{ url_for('prescription_result') }}"
+        >
+            ← กลับไปหน้าผลการตรวจ
+        </a>
+
+    </div>
+
+</div>
+
+
+<script>
+
+function checkSubstitute() {
+
+    const select =
+        document.getElementById("substitute_drug");
+
+    if (!select.value) {
+
+        alert("กรุณาเลือกยาทดแทนก่อน");
+
+        return false;
+    }
+
+    return confirm(
+        "ยืนยันเลือกยาทดแทน " +
+        select.options[select.selectedIndex].text +
+        " หรือไม่?"
+    );
+}
+
+</script>
+
+</body>
+</html>
+```

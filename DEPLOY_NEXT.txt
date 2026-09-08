@@ -1,0 +1,7 @@
+โปรเจกต์นี้จัดเป็นเวอร์ชันสำหรับ Deploy แล้ว
+
+ไฟล์สำคัญ: app.py, drug_interaction.pl, Dockerfile, requirements.txt, templates/, static/, data/
+
+ขั้นต่อไป: อัปโหลดโฟลเดอร์นี้ขึ้น GitHub แล้วสร้าง Render Web Service จาก repository นี้ โดยเลือก Docker
+
+หมายเหตุ: ห้ามใช้ข้อมูลผู้ป่วยจริงบนบริการออนไลน์สำหรับการทดลองนี้ ใช้ข้อมูลตัวอย่างเท่านั้น

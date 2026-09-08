@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0">
+
+    <title>ประวัติการจ่ายยา</title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, Tahoma, sans-serif;
+            background: #f3f4f6;
+            color: #111827;
+        }
+
+        .container {
+            width: 95%;
+            max-width: 1200px;
+            margin: 30px auto;
+        }
+
+        .header {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.08);
+        }
+
+        .header h1 {
+            margin: 0 0 8px 0;
+        }
+
+        .card {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.08);
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 800px;
+        }
+
+        th {
+            background: #1f2937;
+            color: white;
+            padding: 14px;
+        }
+
+        td {
+            padding: 14px;
+            border-bottom: 1px solid #e5e7eb;
+            text-align: center;
+        }
+
+        .success {
+            color: #166534;
+            background: #dcfce7;
+            padding: 7px 12px;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+
+        .cancel {
+            color: #991b1b;
+            background: #fee2e2;
+            padding: 7px 12px;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+
+        .substitute {
+            color: #1d4ed8;
+            background: #dbeafe;
+            padding: 7px 12px;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+
+        .back {
+            display: inline-block;
+            margin-top: 20px;
+            background: #374151;
+            color: white;
+            text-decoration: none;
+            padding: 12px 20px;
+            border-radius: 10px;
+            font-weight: bold;
+        }
+
+        .empty {
+            text-align: center;
+            padding: 40px;
+            color: #6b7280;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+    <div class="header">
+
+        <h1>
+            📋 ประวัติการจ่ายยา
+        </h1>
+
+        <p>
+            รายการผู้ป่วยที่ดำเนินการแล้ว
+        </p>
+
+    </div>
+
+
+    {% if history %}
+
+    {% for item in history %}
+
+    <div class="card">
+
+        <div class="table-wrapper">
+
+            <table>
+
+                <thead>
+
+                    <tr>
+
+                        <th>
+                            HN
+                        </th>
+
+                        <th>
+                            ชื่อผู้ป่วย
+                        </th>
+
+                        <th>
+                            วันที่ดำเนินการ
+                        </th>
+
+                        <th>
+                            ผลการดำเนินการ
+                        </th>
+
+                    </tr>
+
+                </thead>
+
+                <tbody>
+
+                    <tr>
+
+                        <td>
+                            {{ item.hn }}
+                        </td>
+
+                        <td>
+                            {{ item.patient_name }}
+                        </td>
+
+                        <td>
+                            {{ item.created_at }}
+                        </td>
+
+                        <td>
+
+                            {% if "ยกเลิก" in item.decision %}
+
+                                <span class="cancel">
+                                    ❌ {{ item.decision }}
+                                </span>
+
+                            {% elif "ทดแทน" in item.decision %}
+
+                                <span class="substitute">
+                                    🔄 {{ item.decision }}
+                                </span>
+
+                            {% else %}
+
+                                <span class="success">
+                                    ✅ {{ item.decision }}
+                                </span>
+
+                            {% endif %}
+
+                        </td>
+
+                    </tr>
+
+                </tbody>
+
+            </table>
+
+        </div>
+
+    </div>
+
+    {% endfor %}
+
+    {% else %}
+
+    <div class="card empty">
+
+        <h2>
+            📭 ยังไม่มีประวัติ
+        </h2>
+
+        <p>
+            เมื่อมีการจ่ายยา
+            รายการจะแสดงที่หน้านี้
+        </p>
+
+    </div>
+
+    {% endif %}
+
+
+    <a
+        href="/prescription"
+        class="back">
+
+        ⬅️ กลับไปตรวจสอบใบสั่งยา
+
+    </a>
+
+</div>
+
+</body>
+
+</html>

@@ -1,0 +1,832 @@
+```html
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+    <meta charset="UTF-8">
+    <title>ผลการตรวจใบสั่งยา</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f7fb;
+            margin: 0;
+            padding: 30px;
+            color: #222;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .patient-card {
+            background: white;
+            border-radius: 16px;
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        }
+
+        .patient-header {
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+
+        .patient-header h2 {
+            margin: 0 0 15px 0;
+        }
+
+        .patient-info {
+            line-height: 1.8;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: center;
+        }
+
+        th {
+            background: #f0f2f5;
+        }
+
+        .ok {
+            color: #16803c;
+            font-weight: bold;
+        }
+
+        .bad {
+            color: #c62828;
+            font-weight: bold;
+        }
+
+        .interaction-box {
+            background: #fff3f3;
+            border: 2px solid #e53935;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .no-interaction {
+            background: #effaf2;
+            border: 2px solid #35a853;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .button-area {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        button,
+        .btn {
+            border: none;
+            border-radius: 10px;
+            padding: 12px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .dispense {
+            background: #16803c;
+            color: white;
+        }
+
+        .doctor {
+            background: #7b1fa2;
+            color: white;
+        }
+
+        .consult {
+            background: #1565c0;
+            color: white;
+        }
+
+        .history {
+            background: #555;
+            color: white;
+        }
+
+        .warning {
+            color: #c62828;
+            font-weight: bold;
+        }
+
+        .already {
+            background: #eee;
+            color: #555;
+            padding: 12px;
+            border-radius: 10px;
+            margin-top: 15px;
+        }
+
+        .interaction-item {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+
+        .test-warning {
+            background: #fff8e1;
+            border: 1px solid #ffcc02;
+            border-radius: 10px;
+            padding: 12px;
+            margin-top: 15px;
+            color: #6d5600;
+        }
+
+        .stock-info {
+            background: #f7f9fc;
+            border-radius: 8px;
+            padding: 8px;
+            margin-top: 5px;
+            font-size: 14px;
+        }
+
+        .stock-found {
+            color: #16803c;
+            font-weight: bold;
+        }
+
+        .stock-not-found {
+            color: #c62828;
+            font-weight: bold;
+        }
+
+        .stock-insufficient {
+            color: #c62828;
+            font-weight: bold;
+        }
+
+        .stock-required {
+            font-size: 13px;
+            color: #666;
+        }
+
+        .error-box {
+            background: #fff0f0;
+            border: 2px solid #e53935;
+            color: #b71c1c;
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+
+        .empty {
+            text-align: center;
+            padding: 40px;
+            color: #777;
+        }
+
+        .disabled-button {
+            background: #aaa;
+            color: white;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
+        .stock-summary {
+            background: #eef6ff;
+            border: 1px solid #90caf9;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>📋 ผลการตรวจใบสั่งยา</h1>
+
+    {% if error %}
+    <div class="error-box">
+        ⚠️ {{ error }}
+    </div>
+    {% endif %}
+
+
+    {% if not patients %}
+
+        <div class="patient-card empty">
+
+            <h2>ไม่พบผู้ป่วยที่รอจ่ายยา</h2>
+
+            <p>
+                ผู้ป่วยอาจถูกจ่ายยาไปแล้ว
+                หรือยังไม่ได้อัปโหลดใบสั่งยา
+            </p>
+
+            <div class="button-area">
+
+                <a
+                    class="btn history"
+                    href="{{ url_for('prescription') }}"
+                >
+                    ← กลับไปอัปโหลดใบสั่งยา
+                </a>
+
+                <a
+                    class="btn history"
+                    href="{{ url_for('history') }}"
+                >
+                    📋 ดูประวัติการจ่ายยา
+                </a>
+
+            </div>
+
+        </div>
+
+    {% endif %}
+
+
+    {% for patient in patients %}
+
+    <div class="patient-card">
+
+        <!-- ========================================= -->
+        <!-- PATIENT INFORMATION -->
+        <!-- ========================================= -->
+
+        <div class="patient-header">
+
+            <h2>
+                👤 HN: {{ patient.hn }}
+            </h2>
+
+            <div class="patient-info">
+
+                <p>
+                    <strong>ชื่อ:</strong>
+                    {{ patient.name }}
+                </p>
+
+                <p>
+                    <strong>อายุ:</strong>
+                    {{ patient.age }}
+                </p>
+
+                <p>
+                    <strong>วันที่จ่ายยา:</strong>
+                    {{ patient.dispense_date }}
+                </p>
+
+                <p>
+                    <strong>วันนัด:</strong>
+                    {{ patient.appointment_date }}
+                </p>
+
+                <p>
+                    <strong>จำนวนวันที่ต้องใช้ยา:</strong>
+                    {{ patient.required_days }}
+                    วัน
+                </p>
+
+            </div>
+
+        </div>
+
+
+        <!-- ========================================= -->
+        <!-- MEDICINES -->
+        <!-- ========================================= -->
+
+        <h3>💊 รายการยา</h3>
+
+        <table>
+
+            <thead>
+                <tr>
+                    <th>ลำดับ</th>
+                    <th>ชื่อยา</th>
+                    <th>ขนาดยา</th>
+                    <th>ครั้ง/วัน</th>
+                    <th>จำนวนที่ต้องจ่าย</th>
+                    <th>จำนวนวันที่ใช้ได้</th>
+                    <th>Stock ปัจจุบัน</th>
+                    <th>สถานะ Stock</th>
+                </tr>
+            </thead>
+
+            <tbody>
+
+                {% for medicine in patient.medicines %}
+
+                <tr>
+
+                    <td>
+                        {{ loop.index }}
+                    </td>
+
+                    <td>
+                        <strong>{{ medicine.name }}</strong>
+
+                        {% if medicine.stock_matched_name
+                              and medicine.stock_matched_name != medicine.name %}
+
+                        <div class="stock-info">
+                            พบชื่อใน Stock เป็น:
+                            <strong>{{ medicine.stock_matched_name }}</strong>
+                        </div>
+
+                        {% endif %}
+                    </td>
+
+                    <td>
+                        {{ medicine.strength }}
+                    </td>
+
+                    <td>
+                        {{ medicine.times_per_day }}
+                    </td>
+
+                    <td>
+                        {{ medicine.quantity }}
+                    </td>
+
+                    <td>
+                        {{ "%.1f"|format(medicine.days_supply) }}
+                        วัน
+                    </td>
+
+                    <!-- ================================= -->
+                    <!-- STOCK QUANTITY -->
+                    <!-- ================================= -->
+
+                    <td>
+
+                        {% if medicine.stock_found %}
+
+                            <strong>
+                                {{ medicine.stock_quantity }}
+                            </strong>
+
+                            {% if medicine.stock_unit %}
+                                {{ medicine.stock_unit }}
+                            {% endif %}
+
+                        {% else %}
+
+                            <span class="bad">
+                                ไม่พบยา
+                            </span>
+
+                        {% endif %}
+
+                    </td>
+
+
+                    <!-- ================================= -->
+                    <!-- STOCK STATUS -->
+                    <!-- ================================= -->
+
+                    <td>
+
+                        {% if medicine.stock_found %}
+
+                            {% if medicine.stock_quantity >= medicine.quantity %}
+
+                                <span class="ok">
+                                    ✓ มีเพียงพอ
+                                </span>
+
+                                <div class="stock-required">
+                                    ต้องใช้ {{ medicine.quantity }}
+                                </div>
+
+                            {% else %}
+
+                                <span class="bad">
+                                    ✗ Stock ไม่เพียงพอ
+                                </span>
+
+                                <div class="stock-required">
+                                    ต้องใช้ {{ medicine.quantity }}
+                                </div>
+
+                            {% endif %}
+
+                        {% else %}
+
+                            <span class="bad">
+                                ✗ ไม่พบใน Stock
+                            </span>
+
+                        {% endif %}
+
+                    </td>
+
+                </tr>
+
+                {% endfor %}
+
+            </tbody>
+
+        </table>
+
+
+        <!-- ========================================= -->
+        <!-- STOCK SUMMARY -->
+        <!-- ========================================= -->
+
+        {% set stock_ok = true %}
+
+        {% for medicine in patient.medicines %}
+
+            {% if not medicine.stock_found %}
+                {% set stock_ok = false %}
+            {% elif medicine.stock_quantity < medicine.quantity %}
+                {% set stock_ok = false %}
+            {% endif %}
+
+        {% endfor %}
+
+
+        <div class="stock-summary">
+
+            <strong>📦 สรุป Stock</strong>
+
+            {% if stock_ok %}
+
+                <span class="ok">
+                    ✓ ยาทุกรายการมีใน Stock และมีจำนวนเพียงพอ
+                </span>
+
+            {% else %}
+
+                <span class="bad">
+                    ✗ มีรายการยาที่ไม่พบใน Stock หรือมีจำนวนไม่เพียงพอ
+                </span>
+
+            {% endif %}
+
+        </div>
+
+
+        <!-- ========================================= -->
+        <!-- INTERACTION FOUND -->
+        <!-- ========================================= -->
+
+        {% if patient.interaction_results %}
+
+        <div class="interaction-box">
+
+            <h3>
+                🚨 พบ Drug Interaction
+            </h3>
+
+            <p>
+                พบ Interaction จำนวน
+                <strong>
+                    {{ patient.interaction_results|length }}
+                </strong>
+                รายการ
+            </p>
+
+
+            {% for item in patient.interaction_results %}
+
+            <div class="interaction-item">
+
+                <p>
+                    <strong>
+                        Interaction {{ loop.index }}
+                    </strong>
+                </p>
+
+                <p>
+                    <strong>ยา:</strong>
+                    {{ item.Drug_1 }}
+                    ↔
+                    {{ item.Drug_2 }}
+                </p>
+
+                <p>
+                    <strong>Risk:</strong>
+                    {{ item.Risk }}
+                </p>
+
+                <p>
+                    <strong>Severity:</strong>
+                    {{ item.Severity }}
+                </p>
+
+                <p>
+                    <strong>รายละเอียด:</strong>
+                    {{ item.Summary }}
+                </p>
+
+                {% if item.Management %}
+                <p>
+                    <strong>Management:</strong>
+                    {{ item.Management }}
+                </p>
+                {% endif %}
+
+                {% if item.Reference %}
+                <p>
+                    <strong>Reference:</strong>
+                    {{ item.Reference }}
+                </p>
+                {% endif %}
+
+            </div>
+
+            {% endfor %}
+
+
+            <!-- ===================================== -->
+            <!-- TEST WARNING -->
+            <!-- ===================================== -->
+
+            <div class="test-warning">
+
+                ⚠️ <strong>โหมดทดสอบ</strong><br>
+
+                การกด
+                <strong>“ยืนยันแทนแพทย์”</strong>
+                เป็นการจำลองการตัดสินใจของแพทย์สำหรับการทดสอบระบบเท่านั้น
+                ไม่ใช่คำสั่งการรักษาจริง
+
+            </div>
+
+
+            <!-- ===================================== -->
+            <!-- CONSULT PDF -->
+            <!-- ===================================== -->
+
+            <div class="button-area">
+
+                <form
+                    action="{{ url_for('create_consult_pdf') }}"
+                    method="POST"
+                >
+
+                    <input type="hidden"
+                           name="hn"
+                           value="{{ patient.hn }}">
+
+                    <input type="hidden"
+                           name="patient_name"
+                           value="{{ patient.name }}">
+
+                    <input type="hidden"
+                           name="age"
+                           value="{{ patient.age }}">
+
+                    <input type="hidden"
+                           name="dispense_date"
+                           value="{{ patient.dispense_date }}">
+
+                    <input type="hidden"
+                           name="appointment_date"
+                           value="{{ patient.appointment_date }}">
+
+                    <input type="hidden"
+                           name="interaction_count"
+                           value="{{ patient.interaction_results|length }}">
+
+
+                    {% for item in patient.interaction_results %}
+
+                    <input type="hidden"
+                           name="drug1_{{ loop.index0 }}"
+                           value="{{ item.Drug_1 }}">
+
+                    <input type="hidden"
+                           name="drug2_{{ loop.index0 }}"
+                           value="{{ item.Drug_2 }}">
+
+                    <input type="hidden"
+                           name="risk_{{ loop.index0 }}"
+                           value="{{ item.Risk }}">
+
+                    <input type="hidden"
+                           name="severity_{{ loop.index0 }}"
+                           value="{{ item.Severity }}">
+
+                    <input type="hidden"
+                           name="summary_{{ loop.index0 }}"
+                           value="{{ item.Summary }}">
+
+                    <input type="hidden"
+                           name="management_{{ loop.index0 }}"
+                           value="{{ item.Management }}">
+
+                    <input type="hidden"
+                           name="reference_{{ loop.index0 }}"
+                           value="{{ item.Reference }}">
+
+                    {% endfor %}
+
+
+                    <input type="hidden"
+                           name="medication_count"
+                           value="{{ patient.medicines|length }}">
+
+
+                    {% for medicine in patient.medicines %}
+
+                    <input type="hidden"
+                           name="med_name_{{ loop.index0 }}"
+                           value="{{ medicine.name }}">
+
+                    <input type="hidden"
+                           name="med_strength_{{ loop.index0 }}"
+                           value="{{ medicine.strength }}">
+
+                    <input type="hidden"
+                           name="med_frequency_{{ loop.index0 }}"
+                           value="{{ medicine.times_per_day }}">
+
+                    <input type="hidden"
+                           name="med_quantity_{{ loop.index0 }}"
+                           value="{{ medicine.quantity }}">
+
+                    <input type="hidden"
+                           name="med_route_{{ loop.index0 }}"
+                           value="ไม่ได้ระบุ">
+
+                    <input type="hidden"
+                           name="med_start_date_{{ loop.index0 }}"
+                           value="{{ patient.dispense_date }}">
+
+                    {% endfor %}
+
+
+                    <button
+                        class="btn consult"
+                        type="submit"
+                    >
+                        📄 สร้าง Consult PDF
+                    </button>
+
+                </form>
+
+
+                <!-- ================================= -->
+                <!-- DOCTOR CONFIRM -->
+                <!-- ================================= -->
+
+                {% if patient.queue_id %}
+
+                <form
+                    action="{{ url_for('doctor_confirm', queue_id=patient.queue_id) }}"
+                    method="GET"
+                >
+
+                    <button
+                        class="btn doctor"
+                        type="submit"
+                        onclick="return confirm('เข้าสู่หน้าจำลองการยืนยันแทนแพทย์ใช่หรือไม่?');"
+                    >
+                        👨‍⚕️ ยืนยันแทนแพทย์
+                    </button>
+
+                </form>
+
+                {% else %}
+
+                <div class="already">
+                    ⚠️ ไม่พบ Queue ID ของผู้ป่วย
+                </div>
+
+                {% endif %}
+
+            </div>
+
+        </div>
+
+
+        <!-- ========================================= -->
+        <!-- NO INTERACTION -->
+        <!-- ========================================= -->
+
+        {% else %}
+
+        <div class="no-interaction">
+
+            <h3>
+                ✅ ไม่พบ Drug Interaction
+            </h3>
+
+            <p>
+                ไม่พบข้อมูล Interaction
+                ในฐานความรู้ของระบบ
+            </p>
+
+            <div class="test-warning">
+
+                ℹ️ ข้อความนี้หมายถึง
+                <strong>ไม่พบข้อมูล Interaction ในฐานความรู้ของระบบ</strong>
+                ไม่ได้หมายความว่ายาทั้งหมดปลอดภัยหรือไม่มี Interaction
+                เนื่องจากฐานข้อมูลนี้ใช้สำหรับการทดสอบระบบ
+
+            </div>
+
+
+            <!-- ===================================== -->
+            <!-- DISPENSE -->
+            <!-- ===================================== -->
+
+            {% if patient.queue_id %}
+
+                {% if stock_ok %}
+
+                <form
+                    action="{{ url_for('dispense', queue_id=patient.queue_id) }}"
+                    method="POST"
+                    style="margin-top:20px;"
+                >
+
+                    <button
+                        class="btn dispense"
+                        type="submit"
+                        onclick="return confirm('ยืนยันการจ่ายยาให้ผู้ป่วย HN {{ patient.hn }} ?');"
+                    >
+                        💊 จ่ายยา
+                    </button>
+
+                </form>
+
+                {% else %}
+
+                <button
+                    class="btn disabled-button"
+                    type="button"
+                    disabled
+                >
+                    🚫 ไม่สามารถจ่ายยาได้ — Stock ไม่เพียงพอ
+                </button>
+
+                {% endif %}
+
+            {% else %}
+
+                <div class="already">
+                    ⚠️ ไม่พบ Queue ID ของผู้ป่วย
+                </div>
+
+            {% endif %}
+
+        </div>
+
+        {% endif %}
+
+    </div>
+
+    {% endfor %}
+
+
+    <!-- ========================================= -->
+    <!-- BOTTOM BUTTONS -->
+    <!-- ========================================= -->
+
+    <div class="button-area">
+
+        <a
+            class="btn history"
+            href="{{ url_for('prescription') }}"
+        >
+            ← กลับไปอัปโหลดใบสั่งยา
+        </a>
+
+        <a
+            class="btn history"
+            href="{{ url_for('history') }}"
+        >
+            📋 ดูประวัติการจ่ายยา
+        </a>
+
+    </div>
+
+</div>
+
+</body>
+</html>
+```

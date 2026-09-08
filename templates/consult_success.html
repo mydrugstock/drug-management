@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <title>สร้าง Consult สำเร็จ</title>
+
+    <style>
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f7fb;
+            padding: 40px;
+        }
+
+        .box {
+            max-width: 650px;
+            margin: auto;
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+            text-align: center;
+        }
+
+        .success {
+            color: #166534;
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        .pdf-button {
+            display: inline-block;
+            margin-top: 25px;
+            padding: 14px 25px;
+            background: #2563eb;
+            color: white;
+            text-decoration: none;
+            border-radius: 10px;
+            font-weight: bold;
+        }
+
+        .back {
+            display: block;
+            margin-top: 20px;
+            color: #2563eb;
+            text-decoration: none;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+<div class="box">
+
+    <div class="success">
+        ✅ สร้าง Consult PDF สำเร็จ
+    </div>
+
+    <p>
+        ระบบสร้างเอกสาร Consult
+        สำหรับส่งให้แพทย์เรียบร้อยแล้ว
+    </p>
+
+    <p>
+        ไฟล์:
+        <strong>
+            {{ filename }}
+        </strong>
+    </p>
+
+    <a class="pdf-button"
+       href="/static/consults/{{ filename }}"
+       target="_blank">
+
+        📄 เปิด Consult PDF
+
+    </a>
+
+    <a class="back"
+       href="/prescription">
+
+        ← กลับไปตรวจใบสั่งยา
+
+    </a>
+
+</div>
+
+</body>
+
+</html>

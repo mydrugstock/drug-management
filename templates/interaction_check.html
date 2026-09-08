@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <title>ตรวจสอบยาชนกัน</title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            margin: 0;
+            background: #f4f7fb;
+            color: #1f2937;
+        }
+
+        header {
+            background: #dc2626;
+            color: white;
+            padding: 25px 40px;
+        }
+
+        header h1 {
+            margin: 0 0 8px 0;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 35px auto;
+            padding: 0 20px;
+        }
+
+        .back {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #2563eb;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 25px;
+            margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        }
+
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 100px;
+            padding: 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 10px;
+            resize: vertical;
+            margin-bottom: 20px;
+            font-size: 15px;
+        }
+
+        button {
+            background: #dc2626;
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background: #b91c1c;
+        }
+
+        .alert {
+            border-left: 6px solid #dc2626;
+            background: #fef2f2;
+            padding: 20px;
+            margin-bottom: 15px;
+            border-radius: 10px;
+        }
+
+        .alert h3 {
+            margin-top: 0;
+            color: #b91c1c;
+        }
+
+        .no-result {
+            background: #f0fdf4;
+            border-left: 6px solid #16a34a;
+            padding: 20px;
+            border-radius: 10px;
+        }
+
+        .warning {
+            background: #fffbeb;
+            border-left: 6px solid #d97706;
+            padding: 15px;
+            margin-top: 15px;
+            border-radius: 8px;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+<header>
+
+    <h1>⚠️ ตรวจสอบยาชนกัน</h1>
+
+    <p>
+        ตรวจสอบรายการยากับฐานความรู้ Drug Interaction
+    </p>
+
+</header>
+
+
+<div class="container">
+
+    <a href="/" class="back">
+        ← กลับหน้าหลัก
+    </a>
+
+
+    <div class="card">
+
+        <h2>กรอกรายการยา</h2>
+
+        <p>
+            หากมียาหลายรายการ ให้คั่นด้วยเครื่องหมาย ,
+        </p>
+
+        <br>
+
+        <form method="POST">
+
+            <label>
+                💊 ยาที่ผู้ป่วยใช้อยู่
+            </label>
+
+            <textarea
+                name="current_drugs"
+                placeholder="ตัวอย่าง: Captopril, Metformin">{{ request.form.get("current_drugs", "") }}</textarea>
+
+
+            <label>
+                💊 ยาใหม่ที่กำลังจะจ่าย
+            </label>
+
+            <textarea
+                name="new_drugs"
+                placeholder="ตัวอย่าง: Losartan">{{ request.form.get("new_drugs", "") }}</textarea>
+
+
+            <button type="submit">
+                🔍 ตรวจสอบ Interaction
+            </button>
+
+        </form>
+
+    </div>
+
+
+    {% if submitted_drugs %}
+
+    <div class="card">
+
+        <h2>ผลการตรวจสอบ</h2>
+
+        {% if results %}
+
+            <div class="warning">
+                ⚠️ พบข้อมูล Interaction ในฐานความรู้
+                กรุณาให้แพทย์เป็นผู้พิจารณา
+            </div>
+
+            <br>
+
+            {% for item in results %}
+
+            <div class="alert">
+
+                <h3>
+                    ⚠️ {{ item["Drug_1"] }}
+                    ↔
+                    {{ item["Drug_2"] }}
+                </h3>
+
+                <p>
+                    <strong>Risk:</strong>
+                    {{ item["Risk"] }}
+                </p>
+
+                <p>
+                    <strong>Severity:</strong>
+                    {{ item["Severity"] }}
+                </p>
+
+                <p>
+                    <strong>รายละเอียด:</strong>
+                    {{ item["Summary"] }}
+                </p>
+
+                <p>
+                    <strong>การจัดการ:</strong>
+                    {{ item["Management"] }}
+                </p>
+
+                <p>
+                    <strong>แหล่งอ้างอิง:</strong>
+                    {{ item["Reference"] }}
+                </p>
+
+            </div>
+
+            {% endfor %}
+
+        {% else %}
+
+            <div class="no-result">
+
+                🟢 ไม่พบข้อมูล Interaction
+                สำหรับรายการยาที่ตรวจสอบในฐานความรู้ของระบบ
+
+            </div>
+
+        {% endif %}
+
+    </div>
+
+    {% endif %}
+
+</div>
+
+</body>
+
+</html>

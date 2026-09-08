@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>ระบบจัดการข้อมูลยา</title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f5f7fb;
+            color: #1f2937;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: auto;
+            padding: 40px 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            margin-bottom: 10px;
+            font-size: 36px;
+        }
+
+        .header p {
+            color: #6b7280;
+            font-size: 18px;
+        }
+
+        .menu {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+        }
+
+        .card {
+            display: block;
+            background: white;
+            padding: 30px;
+            border-radius: 16px;
+            text-decoration: none;
+            color: #1f2937;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+            transition: 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+        }
+
+        .icon {
+            font-size: 42px;
+            margin-bottom: 15px;
+        }
+
+        .card h2 {
+            margin: 0 0 10px 0;
+            font-size: 22px;
+        }
+
+        .card p {
+            margin: 0;
+            color: #6b7280;
+            line-height: 1.6;
+        }
+
+        .prescription {
+            grid-column: span 2;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            color: #9ca3af;
+            font-size: 14px;
+        }
+
+        @media (max-width: 700px) {
+
+            .menu {
+                grid-template-columns: 1fr;
+            }
+
+            .prescription {
+                grid-column: span 1;
+            }
+
+            .header h1 {
+                font-size: 28px;
+            }
+
+        }
+
+    </style>
+
+</head>
+
+
+<body>
+
+<div class="container">
+
+
+    <!-- HEADER -->
+
+    <div class="header">
+
+        <h1>💊 ระบบจัดการข้อมูลยา</h1>
+
+        <p>
+            Medication Management & Clinical Decision Support System
+        </p>
+
+    </div>
+
+
+    <!-- MENU -->
+
+    <div class="menu">
+
+
+        <!-- PRESCRIPTION -->
+
+        <a href="/prescription" class="card prescription">
+
+            <div class="icon">
+                📄
+            </div>
+
+            <h2>
+                ตรวจสอบใบสั่งยา
+            </h2>
+
+            <p>
+                นำข้อมูลใบสั่งยาผู้ป่วยเข้าสู่ระบบ
+                เพื่อตรวจสอบจำนวนยาให้เพียงพอถึงวันนัด
+                และตรวจสอบยาที่อาจเกิด Interaction
+            </p>
+
+        </a>
+
+
+        <!-- APPOINTMENT -->
+
+        <a href="/appointment" class="card">
+
+            <div class="icon">
+                📅
+            </div>
+
+            <h2>
+                ตรวจยาพอถึงวันนัด
+            </h2>
+
+            <p>
+                ตรวจสอบจำนวนยาที่ผู้ป่วยได้รับ
+                ว่าเพียงพอจนถึงวันนัดครั้งถัดไปหรือไม่
+            </p>
+
+        </a>
+
+
+        <!-- INTERACTION -->
+
+        <a href="/interaction-check" class="card">
+
+            <div class="icon">
+                ⚠️
+            </div>
+
+            <h2>
+                ตรวจสอบยาตีกัน
+            </h2>
+
+            <p>
+                ตรวจสอบรายการยาเพื่อค้นหาข้อมูล
+                Drug Interaction จากฐานความรู้ของระบบ
+            </p>
+
+        </a>
+
+
+        <!-- STOCK -->
+
+        <a href="/stock" class="card">
+
+            <div class="icon">
+                📦
+            </div>
+
+            <h2>
+                สต๊อกยา
+            </h2>
+
+            <p>
+                ดูข้อมูลจำนวนยาและสถานะสต๊อกยา
+                จากไฟล์ข้อมูลของระบบ
+            </p>
+
+        </a>
+
+
+        <!-- KNOWLEDGE -->
+
+        <a href="/interactions" class="card">
+
+            <div class="icon">
+                🧠
+            </div>
+
+            <h2>
+                ฐานความรู้ยาตีกัน
+            </h2>
+
+            <p>
+                ดูข้อมูล Drug Interaction
+                ที่ระบบใช้ในการตรวจสอบ
+            </p>
+
+        </a>
+
+
+        <!-- HISTORY -->
+
+        <a href="/history" class="card">
+
+            <div class="icon">
+                📋
+            </div>
+
+            <h2>
+                ประวัติ
+            </h2>
+
+            <p>
+                ดูประวัติการตรวจสอบใบสั่งยา
+                และผลการแจ้งเตือน
+            </p>
+
+        </a>
+
+
+    </div>
+
+
+    <!-- FOOTER -->
+
+    <div class="footer">
+
+        ระบบต้นแบบสำหรับการจัดการข้อมูลยา
+        <br>
+        Clinical Decision Support System
+
+    </div>
+
+
+</div>
+
+</body>
+
+</html>

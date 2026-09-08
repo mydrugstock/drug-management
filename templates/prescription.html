@@ -1,0 +1,745 @@
+```html
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>ตรวจสอบใบสั่งยา</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+            background: #f4f7fb;
+            color: #1f2937;
+        }
+
+        .navbar {
+            background: #1e3a8a;
+            color: white;
+            padding: 16px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+        }
+
+        .navbar-title {
+            font-size: 22px;
+            font-weight: bold;
+        }
+
+        .navbar-links {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .navbar-links a {
+            color: white;
+            text-decoration: none;
+            padding: 8px 14px;
+            border-radius: 8px;
+            transition: 0.2s;
+            font-size: 14px;
+        }
+
+        .navbar-links a:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .container {
+            width: 92%;
+            max-width: 1100px;
+            margin: 35px auto;
+        }
+
+        .page-title {
+            text-align: center;
+            margin-bottom: 10px;
+            color: #1e3a8a;
+            font-size: 30px;
+        }
+
+        .page-description {
+            text-align: center;
+            color: #6b7280;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
+            margin-bottom: 25px;
+        }
+
+        .card-title {
+            font-size: 21px;
+            font-weight: bold;
+            color: #1e3a8a;
+            margin-bottom: 8px;
+        }
+
+        .card-description {
+            color: #6b7280;
+            margin-bottom: 25px;
+        }
+
+        .upload-area {
+            border: 2px dashed #93c5fd;
+            border-radius: 14px;
+            padding: 35px 25px;
+            text-align: center;
+            background: #eff6ff;
+            transition: 0.2s;
+        }
+
+        .upload-area:hover {
+            background: #dbeafe;
+            border-color: #2563eb;
+        }
+
+        .upload-icon {
+            font-size: 55px;
+            margin-bottom: 10px;
+        }
+
+        .upload-text {
+            font-size: 18px;
+            font-weight: bold;
+            color: #1e3a8a;
+            margin-bottom: 8px;
+        }
+
+        .upload-subtext {
+            color: #6b7280;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+
+        input[type="file"] {
+            display: block;
+            width: 100%;
+            max-width: 500px;
+            margin: 0 auto 20px auto;
+            padding: 12px;
+            background: white;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        input[type="file"]:hover {
+            border-color: #2563eb;
+        }
+
+        .button-area {
+            text-align: center;
+        }
+
+        .btn {
+            border: none;
+            border-radius: 9px;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            transition: 0.2s;
+        }
+
+        .btn-primary {
+            background: #2563eb;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #1d4ed8;
+        }
+
+        .btn-secondary {
+            background: #64748b;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #475569;
+        }
+
+        .error-box {
+            background: #fee2e2;
+            border: 1px solid #fca5a5;
+            color: #991b1b;
+            border-radius: 10px;
+            padding: 15px 18px;
+            margin-bottom: 25px;
+        }
+
+        .error-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .info-box {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            color: #1e40af;
+            border-radius: 10px;
+            padding: 15px 18px;
+            margin-top: 25px;
+            line-height: 1.7;
+        }
+
+        .format-box {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 25px;
+        }
+
+        .format-title {
+            font-weight: bold;
+            color: #334155;
+            margin-bottom: 12px;
+        }
+
+        .format-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        .format-table th,
+        .format-table td {
+            border: 1px solid #e2e8f0;
+            padding: 10px;
+            text-align: left;
+            font-size: 14px;
+        }
+
+        .format-table th {
+            background: #f1f5f9;
+            color: #334155;
+        }
+
+        .required {
+            color: #dc2626;
+            font-weight: bold;
+        }
+
+        .optional {
+            color: #64748b;
+        }
+
+        .workflow {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 12px;
+            margin-top: 25px;
+        }
+
+        .workflow-item {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 18px 10px;
+            text-align: center;
+        }
+
+        .workflow-number {
+            width: 35px;
+            height: 35px;
+            line-height: 35px;
+            margin: 0 auto 8px auto;
+            background: #2563eb;
+            color: white;
+            border-radius: 50%;
+            font-weight: bold;
+        }
+
+        .workflow-text {
+            font-size: 13px;
+            color: #475569;
+            line-height: 1.5;
+        }
+
+        .footer {
+            text-align: center;
+            color: #94a3b8;
+            font-size: 13px;
+            padding: 25px;
+        }
+
+        @media (max-width: 800px) {
+            .navbar {
+                flex-direction: column;
+                gap: 12px;
+                text-align: center;
+            }
+
+            .workflow {
+                grid-template-columns: 1fr;
+            }
+
+            .container {
+                width: 95%;
+            }
+
+            .card {
+                padding: 20px;
+            }
+
+            .page-title {
+                font-size: 25px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- ============================= -->
+    <!-- Navigation Bar -->
+    <!-- ============================= -->
+
+    <div class="navbar">
+
+        <div class="navbar-title">
+            💊 ระบบจัดการยา
+        </div>
+
+        <div class="navbar-links">
+            <a href="/">หน้าแรก</a>
+            <a href="/stock">คลังยา</a>
+            <a href="/interactions">ยาตีกัน</a>
+            <a href="/interaction-check">ตรวจยาตีกัน</a>
+            <a href="/prescription">ใบสั่งยา</a>
+            <a href="/history">ประวัติการจ่ายยา</a>
+        </div>
+
+    </div>
+
+
+    <!-- ============================= -->
+    <!-- Main Content -->
+    <!-- ============================= -->
+
+    <div class="container">
+
+        <h1 class="page-title">
+            📄 ตรวจสอบใบสั่งยา
+        </h1>
+
+        <div class="page-description">
+            อัปโหลดไฟล์ Excel เพื่อวิเคราะห์รายการยา จำนวนยา และยาตีกัน
+        </div>
+
+
+        <!-- ============================= -->
+        <!-- Error Message -->
+        <!-- ============================= -->
+
+        {% if error %}
+
+        <div class="error-box">
+
+            <div class="error-title">
+                ❌ เกิดข้อผิดพลาด
+            </div>
+
+            <div>
+                {{ error }}
+            </div>
+
+        </div>
+
+        {% endif %}
+
+
+        <!-- ============================= -->
+        <!-- Upload Card -->
+        <!-- ============================= -->
+
+        <div class="card">
+
+            <div class="card-title">
+                📥 อัปโหลดไฟล์ใบสั่งยา
+            </div>
+
+            <div class="card-description">
+                กรุณาเลือกไฟล์ Excel ที่มีข้อมูลใบสั่งยาของผู้ป่วย
+            </div>
+
+
+            <form
+                method="POST"
+                action="/prescription"
+                enctype="multipart/form-data"
+            >
+
+                <div class="upload-area">
+
+                    <div class="upload-icon">
+                        📊
+                    </div>
+
+                    <div class="upload-text">
+                        เลือกไฟล์ Excel
+                    </div>
+
+                    <div class="upload-subtext">
+                        รองรับไฟล์ .xlsx และ .xls
+                    </div>
+
+
+                    <!-- สำคัญมาก: name ต้องเป็น file -->
+                    <input
+                        type="file"
+                        name="file"
+                        id="file"
+                        accept=".xlsx,.xls"
+                        required
+                    >
+
+
+                    <div class="button-area">
+
+                        <button
+                            type="submit"
+                            class="btn btn-primary"
+                        >
+                            🔍 ตรวจสอบใบสั่งยา
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </form>
+
+
+            <!-- ============================= -->
+            <!-- Information -->
+            <!-- ============================= -->
+
+            <div class="info-box">
+
+                <strong>ℹ️ ระบบจะตรวจสอบอะไรบ้าง?</strong>
+
+                <br>
+
+                1. แยกข้อมูลผู้ป่วยตาม HN
+
+                <br>
+
+                2. แสดงรายการยาของผู้ป่วยแต่ละราย
+
+                <br>
+
+                3. คำนวณจำนวนวันที่ยาสามารถใช้ได้
+
+                <br>
+
+                4. ตรวจสอบจำนวนยาว่าเพียงพอถึงวันนัดหรือไม่
+
+                <br>
+
+                5. ตรวจสอบยาตีกันจากฐานข้อมูลของระบบ
+
+                <br>
+
+                6. หากไม่พบ Interaction สามารถกด
+                <strong>💊 จ่ายยา</strong>
+
+                <br>
+
+                7. หากพบ Interaction สามารถเข้าสู่
+                <strong>👨‍⚕️ ยืนยันแทนแพทย์</strong>
+                เพื่อจำลองการตัดสินใจสำหรับการทดสอบระบบ
+
+            </div>
+
+        </div>
+
+
+        <!-- ============================= -->
+        <!-- Excel Format -->
+        <!-- ============================= -->
+
+        <div class="card">
+
+            <div class="card-title">
+                📋 รูปแบบไฟล์ Excel
+            </div>
+
+            <div class="card-description">
+                ไฟล์ Excel ควรมีหัวตารางตามรายการด้านล่าง
+            </div>
+
+
+            <div class="format-box">
+
+                <div class="format-title">
+                    คอลัมน์ที่ระบบรองรับ
+                </div>
+
+
+                <table class="format-table">
+
+                    <thead>
+
+                        <tr>
+                            <th>คอลัมน์</th>
+                            <th>ตัวอย่างข้อมูล</th>
+                            <th>สถานะ</th>
+                        </tr>
+
+                    </thead>
+
+
+                    <tbody>
+
+                        <tr>
+                            <td>HN</td>
+                            <td>12345</td>
+                            <td class="required">
+                                จำเป็น
+                            </td>
+                        </tr>
+
+
+                        <tr>
+                            <td>Name / Patient Name / ชื่อ</td>
+                            <td>นายทดสอบ ระบบยา</td>
+                            <td class="optional">
+                                ไม่บังคับ
+                            </td>
+                        </tr>
+
+
+                        <tr>
+                            <td>Age / อายุ</td>
+                            <td>55</td>
+                            <td class="optional">
+                                ไม่บังคับ
+                            </td>
+                        </tr>
+
+
+                        <tr>
+                            <td>Drug / Drug Name / Medicine / ชื่อยา</td>
+                            <td>Losartan</td>
+                            <td class="required">
+                                จำเป็น
+                            </td>
+                        </tr>
+
+
+                        <tr>
+                            <td>Strength / Dose / ขนาดยา</td>
+                            <td>50 mg</td>
+                            <td class="optional">
+                                ไม่บังคับ
+                            </td>
+                        </tr>
+
+
+                        <tr>
+                            <td>Times Per Day / Frequency / ครั้งต่อวัน</td>
+                            <td>1</td>
+                            <td class="required">
+                                จำเป็น
+                            </td>
+                        </tr>
+
+
+                        <tr>
+                            <td>Quantity / Qty / จำนวน</td>
+                            <td>30</td>
+                            <td class="required">
+                                จำเป็น
+                            </td>
+                        </tr>
+
+
+                        <tr>
+                            <td>Dispense Date / Date / วันที่จ่ายยา</td>
+                            <td>07/09/2026</td>
+                            <td class="optional">
+                                ไม่บังคับ
+                            </td>
+                        </tr>
+
+
+                        <tr>
+                            <td>Appointment Date / Appointment / วันนัด</td>
+                            <td>07/10/2026</td>
+                            <td class="optional">
+                                ไม่บังคับ
+                            </td>
+                        </tr>
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+
+        <!-- ============================= -->
+        <!-- Workflow -->
+        <!-- ============================= -->
+
+        <div class="card">
+
+            <div class="card-title">
+                🔄 ขั้นตอนการทำงาน
+            </div>
+
+            <div class="workflow">
+
+
+                <div class="workflow-item">
+
+                    <div class="workflow-number">
+                        1
+                    </div>
+
+                    <div class="workflow-text">
+                        อัปโหลด<br>
+                        Excel
+                    </div>
+
+                </div>
+
+
+                <div class="workflow-item">
+
+                    <div class="workflow-number">
+                        2
+                    </div>
+
+                    <div class="workflow-text">
+                        ตรวจสอบ<br>
+                        จำนวนยา
+                    </div>
+
+                </div>
+
+
+                <div class="workflow-item">
+
+                    <div class="workflow-number">
+                        3
+                    </div>
+
+                    <div class="workflow-text">
+                        ตรวจสอบ<br>
+                        ยาตีกัน
+                    </div>
+
+                </div>
+
+
+                <div class="workflow-item">
+
+                    <div class="workflow-number">
+                        4
+                    </div>
+
+                    <div class="workflow-text">
+                        จ่ายยา /<br>
+                        ยืนยันแทนแพทย์
+                    </div>
+
+                </div>
+
+
+                <div class="workflow-item">
+
+                    <div class="workflow-number">
+                        5
+                    </div>
+
+                    <div class="workflow-text">
+                        บันทึก<br>
+                        ประวัติ
+                    </div>
+
+                </div>
+
+
+            </div>
+
+        </div>
+
+
+        <!-- ============================= -->
+        <!-- Back Button -->
+        <!-- ============================= -->
+
+        <div style="text-align: center; margin-top: 20px;">
+
+            <a
+                href="/"
+                class="btn btn-secondary"
+            >
+                ← กลับหน้าหลัก
+            </a>
+
+        </div>
+
+    </div>
+
+
+    <!-- ============================= -->
+    <!-- Footer -->
+    <!-- ============================= -->
+
+    <div class="footer">
+
+        ระบบจัดการยาและตรวจสอบปฏิกิริยาระหว่างยา
+
+        <br>
+
+        สำหรับการทดสอบและพัฒนาโครงงาน
+
+    </div>
+
+
+    <!-- ============================= -->
+    <!-- JavaScript -->
+    <!-- ============================= -->
+
+    <script>
+
+        const fileInput = document.getElementById("file");
+
+        fileInput.addEventListener("change", function () {
+
+            if (this.files.length > 0) {
+
+                const fileName = this.files[0].name;
+
+                console.log("Selected file:", fileName);
+
+            }
+
+        });
+
+    </script>
+
+</body>
+</html>
+```
