@@ -4568,6 +4568,9 @@ def register_thai_fonts():
 
 
     possible_normal_fonts = [
+        os.path.join(BASE_DIR, "static", "fonts", "NotoSansThai-Regular.ttf"),
+        os.path.join(BASE_DIR, "static", "fonts", "THSarabunNew.ttf"),
+
         "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf",
         "/usr/share/fonts/opentype/noto/NotoSansThai-Regular.ttf",
 
@@ -4587,6 +4590,9 @@ def register_thai_fonts():
 
 
     possible_bold_fonts = [
+        os.path.join(BASE_DIR, "static", "fonts", "NotoSansThai-Bold.ttf"),
+        os.path.join(BASE_DIR, "static", "fonts", "THSarabunNew-Bold.ttf"),
+
         "/usr/share/fonts/truetype/noto/NotoSansThai-Bold.ttf",
         "/usr/share/fonts/opentype/noto/NotoSansThai-Bold.ttf",
 
@@ -4662,6 +4668,15 @@ def register_thai_fonts():
 
 
     if normal_font is None:
+
+        print(
+            "WARNING: No Thai font file found (looked in {}). "
+            "Falling back to Helvetica, which cannot render Thai text - "
+            "Thai characters in the PDF will be blank. Place a Thai .ttf "
+            "font (e.g. NotoSansThai-Regular.ttf) in static/fonts/.".format(
+                os.path.join(BASE_DIR, "static", "fonts")
+            )
+        )
 
         normal_font = "Helvetica"
 
@@ -5261,8 +5276,10 @@ def create_consult_pdf():
                         """
                         SELECT id, hn, dispense_date, appointment_date, patient_json
                         FROM prescription_queue
-                        WHERE hn = ? AND status = 'pending'
-                        ORDER BY id DESC
+                        WHERE hn = ?
+                        ORDER BY
+                            CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
+                            id DESC
                         LIMIT 1
                         """,
                         (hn_lookup,)
@@ -5276,7 +5293,7 @@ def create_consult_pdf():
                     except Exception:
                         queue_patient = {}
 
-                    if queue_patient:
+                    if row_lookup is not None:
                         queue_patient["queue_id"] = row_lookup["id"]
                         queue_patient["hn"] = str(row_lookup["hn"] or queue_patient.get("hn", hn_lookup)).strip()
 
