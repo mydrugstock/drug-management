@@ -6648,7 +6648,7 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
     <table>
       <thead><tr>
         <th>ลำดับ</th><th>ชื่อยา</th><th>ขนาดยา</th><th>ครั้ง/วัน</th>
-        <th>จำนวนที่ต้องจ่าย</th><th>จำนวนวันที่ใช้ได้</th>
+        <th>จำนวนที่สั่งจ่าย</th><th>จำนวนที่ต้องจ่ายจริง</th>
         <th>Stock ปัจจุบัน</th><th>สถานะ Stock</th><th>ผลตรวจ</th>
       </tr></thead>
       <tbody>
@@ -6659,7 +6659,7 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
         <td>{{ m.strength or '-' }}</td>
         <td>{{ m.times_per_day }}</td>
         <td>{{ m.quantity }}</td>
-        <td>{{ ('%.1f'|format((m.quantity|float / (m.times_per_day|float)) if (m.times_per_day|float)>0 else 0)) }} วัน</td>
+        <td class="{{ 'bad' if (m.quantity|float) < (m.expected_quantity|float) else 'ok' }}">{{ m.expected_quantity }}</td>
         <td><b>{{ m.stock_quantity|default(0) }}</b> {{ m.stock_unit or '' }}</td>
         <td class="{{ 'ok' if m.stock_found and m.stock_status == 'มีเพียงพอ' else 'bad' }}">
           {% if m.stock_found and m.stock_status == 'มีเพียงพอ' %}✓ มีเพียงพอ{% else %}✗ ไม่เพียงพอ{% endif %}
