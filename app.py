@@ -740,6 +740,64 @@ def resolve_lab_atom(header):
     return LAB_ATOM_ALIASES.get(normalized)
 
 
+# ============================================================
+# SPLIT COMBINED BLOOD PRESSURE (e.g. "128/82" -> SBP + DBP)
+# ============================================================
+
+BP_HEADER_ALIASES = {
+    "bp",
+    "bloodpressure",
+    "ความดัน",
+    "ความดันโลหิต",
+    "ความดันเลือด",
+}
+
+
+def expand_bp_labs(labs):
+    """
+    ถ้าพบคอลัมน์ที่เป็นความดันแบบรวม (เช่น header 'BP' ค่า '128/82')
+    ให้แยกเป็น Systolic/Diastolic เพิ่มเข้าไป โดยยังเก็บค่าดิบเดิมไว้ด้วย
+    เพื่อให้ resolve_lab_atom() map เข้า atom sbp/dbp ใน .pl ได้
+    """
+    if not labs:
+        return labs
+
+    expanded = {}
+
+    for header, value in labs.items():
+
+        expanded[header] = value
+
+        normalized_header = normalize_lab_name(header)
+        value_text = str(value).strip()
+
+        if normalized_header not in BP_HEADER_ALIASES:
+            continue
+
+        if "/" not in value_text:
+            continue
+
+        parts = value_text.split("/")
+
+        if len(parts) != 2:
+            continue
+
+        sbp_text, dbp_text = parts[0].strip(), parts[1].strip()
+
+        try:
+            float(sbp_text)
+            float(dbp_text)
+        except (TypeError, ValueError):
+            continue
+
+        # ชื่อ header ต้อง normalize แล้วตรงกับ alias ที่มีอยู่แล้ว
+        # ("bpsystolic" / "bpdiastolic" อยู่ใน LAB_ATOM_ALIASES แล้ว)
+        expanded["{} (Systolic)".format(header)] = sbp_text
+        expanded["{} (Diastolic)".format(header)] = dbp_text
+
+    return expanded
+
+
 # Cache ผลลัพธ์การเช็คคู่ยา key = frozenset({atom_a, atom_b})
 # กฎ interaction ใน drug_interaction.pl ไม่เปลี่ยนระหว่าง server รันอยู่
 # จึงเช็คคู่เดิมครั้งเดียวพอ ลดการเปิด subprocess swipl ซ้ำๆ ทุกครั้งที่หน้า
@@ -2187,6 +2245,11 @@ def read_prescription_excel(
 
         ]
 
+        # แยกค่า BP รวม (เช่น "128/82") ออกเป็น Systolic/Diastolic
+        # ก่อนคำนวณ/ตรวจสอบใด ๆ เพื่อให้ template และ lab_status ใช้งานได้
+        patient["labs"] = expand_bp_labs(
+            patient.get("labs", {})
+        )
 
         # ====================================================
         # CALCULATE DAYS FIRST
@@ -7014,6 +7077,7 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
 
 def _prepare_unified_result_patient(patient):
     """เตรียมข้อมูลสำหรับหน้าผลตรวจใหม่ โดยไม่เอา Stock เข้า Consult"""
+    patient["labs"] = expand_bp_labs(patient.get("labs", {}))
     patient = calculate_days_check(patient)
     patient["interaction_results"] = check_patient_drug_interactions(patient)
 
