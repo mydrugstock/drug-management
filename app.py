@@ -114,6 +114,34 @@ PROLOG_DRUG_ATOMS = {
 }
 
 
+# ============================================================
+# LAB REFERENCE (สำหรับหน้าอ่านผลแลป)
+# ============================================================
+# key ต้องตรงกับ lab_range/4 และ lab_status/4 ใน drug_interaction.pl
+LAB_DEFINITIONS = {
+    "egfr": {
+        "label": "eGFR (การทำงานของไต)",
+        "placeholder": "เช่น 75",
+        "unit": "ml/min/1.73m²",
+    },
+    "potassium": {
+        "label": "โพแทสเซียม (K+)",
+        "placeholder": "เช่น 4.2",
+        "unit": "mEq/L",
+    },
+    "alt": {
+        "label": "ALT (การทำงานของตับ)",
+        "placeholder": "เช่น 25",
+        "unit": "U/L",
+    },
+}
+
+LAB_STATUS_LABELS = {
+    "normal": {"text": "ปกติ", "css": "normal"},
+    "high": {"text": "สูงกว่าปกติ", "css": "high"},
+    "low": {"text": "ต่ำกว่าปกติ", "css": "low"},
+}
+
 
 # ไฟล์ต้นฉบับใบสั่งยาที่ระบบเก็บไว้เพื่อ Sync แบบ Real-time
 PRESCRIPTION_SOURCE_FILE = os.path.join(
@@ -778,6 +806,176 @@ def _prolog_query_pair(atom_a, atom_b):
         "Severity": parts[2],
         "Warning": parts[3],
     }
+
+
+def _run_prolog_goal(goal, timeout=10):
+    """เรียก SWI-Prolog รันคำสั่ง goal ที่จบด้วย halt(0) แล้วคืน stdout (str) หรือ None ถ้า fail"""
+    if not os.path.exists(PROLOG_FILE):
+        raise FileNotFoundError(
+            "ไม่พบไฟล์ drug_interaction.pl ที่: {}".format(PROLOG_FILE)
+        )
+
+    swipl = shutil.which("swipl")
+
+    if not swipl:
+        possible_paths = [
+            os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
+                         "swipl", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
+                         "SWI-Prolog", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
+                         "swipl", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
+                         "SWI-Prolog", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                         "swipl", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                         "SWI-Prolog", "bin", "swipl.exe"),
+        ]
+        for candidate in possible_paths:
+            if candidate and os.path.isfile(candidate):
+                swipl = candidate
+                break
+
+    if not swipl:
+        raise RuntimeError(
+            "ไม่พบ swipl.exe ของ SWI-Prolog "
+            "กรุณาติดตั้ง SWI-Prolog หรือแจ้งตำแหน่งที่ติดตั้ง"
+        )
+
+    proc = subprocess.run(
+        [swipl, "-q", "-f", "none", "-s", PROLOG_FILE, "-g", goal],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        cwd=BASE_DIR,
+    )
+
+    if proc.returncode != 0:
+        err = proc.stderr.strip() or proc.stdout.strip() or "(ไม่มีข้อความจาก SWI-Prolog)"
+        raise RuntimeError("SWI-Prolog error: {}".format(err))
+
+    output = proc.stdout.strip()
+    if output == "NONE" or not output:
+        return None
+    return output
+
+
+def _format_prolog_number(value):
+    """แปลงตัวเลข Python ให้เป็น literal ที่ SWI-Prolog อ่านได้ (ใช้ . เป็นทศนิยมเสมอ)"""
+    number = float(value)
+    if number.is_integer():
+        return repr(int(number))
+    return repr(number)
+
+
+def query_lab_status(lab_key, value):
+    """เรียก lab_status/4 + lab_range/4 ใน drug_interaction.pl เพื่ออ่านผลแลป 1 ค่า"""
+    if lab_key not in LAB_DEFINITIONS:
+        return None
+
+    value_literal = _format_prolog_number(value)
+
+    goal = (
+        "(lab_status({0}, {1}, Status, Desc), "
+        "lab_range({0}, Lo, Hi, Unit) -> "
+        "format('FOUND\\t~w\\t~w\\t~w\\t~w\\t~w', [Status, Desc, Lo, Hi, Unit]) ; "
+        "write('NONE')), halt(0)"
+    ).format(lab_key, value_literal)
+
+    output = _run_prolog_goal(goal)
+    if not output:
+        return None
+
+    parts = output.split("\t", 5)
+    if len(parts) != 6 or parts[0] != "FOUND":
+        return None
+
+    return {
+        "key": lab_key,
+        "value": value,
+        "status": parts[1],
+        "description": parts[2],
+        "normal_low": parts[3],
+        "normal_high": parts[4],
+        "unit": parts[5],
+    }
+
+
+def query_lab_adjustment(drug_atom, lab_key, value):
+    """เรียก check_lab_adjustment/5 เพื่อหาคำแนะนำปรับยาตามผลแลป (ถ้ามี)"""
+    value_literal = _format_prolog_number(value)
+
+    goal = (
+        "(check_lab_adjustment({0}, {1}, {2}, Severity, Rec) -> "
+        "format('FOUND\\t~w\\t~w', [Severity, Rec]) ; "
+        "write('NONE')), halt(0)"
+    ).format(drug_atom, lab_key, value_literal)
+
+    output = _run_prolog_goal(goal)
+    if not output:
+        return None
+
+    parts = output.split("\t", 2)
+    if len(parts) != 3 or parts[0] != "FOUND":
+        return None
+
+    return {
+        "severity": parts[1],
+        "recommendation": parts[2],
+    }
+
+
+def check_lab_values(lab_values, drug_names=None):
+    """
+    อ่านผลแลปหลายค่าพร้อมกัน (สูง/ต่ำ/ปกติ) และถ้ามีรายชื่อยาร่วมด้วย
+    จะตรวจคำแนะนำปรับยาตามผลแลปนั้นๆ ต่อให้อัตโนมัติ
+
+    lab_values: dict เช่น {"egfr": 75, "potassium": 5.8, "alt": 130}
+    drug_names: list ชื่อยา (ชื่อที่ผู้ใช้พิมพ์ จะถูก resolve เป็น atom เอง)
+    """
+    labs = []
+    for lab_key, raw_value in (lab_values or {}).items():
+        if raw_value in (None, ""):
+            continue
+        try:
+            numeric_value = float(raw_value)
+        except (TypeError, ValueError):
+            continue
+
+        result = query_lab_status(lab_key, numeric_value)
+        if result:
+            labs.append(result)
+
+    adjustments = []
+    resolved_drugs = []
+    for original_name in (drug_names or []):
+        atom = resolve_prolog_drug(original_name)
+        if atom:
+            resolved_drugs.append((str(original_name).strip(), atom))
+
+    for lab_result in labs:
+        if lab_result["status"] == "normal":
+            continue
+        for original_name, atom in resolved_drugs:
+            adjustment = query_lab_adjustment(
+                atom, lab_result["key"], lab_result["value"]
+            )
+            if adjustment:
+                adjustments.append({
+                    "drug": original_name,
+                    "lab_key": lab_result["key"],
+                    "lab_label": LAB_DEFINITIONS.get(lab_result["key"], {}).get(
+                        "label", lab_result["key"]
+                    ),
+                    "severity": adjustment["severity"],
+                    "recommendation": adjustment["recommendation"],
+                })
+
+    return {"labs": labs, "adjustments": adjustments}
 
 
 def check_drug_interactions(drug_names):
@@ -8042,6 +8240,245 @@ def interaction_check():
         results=results,
         drug1=drug1,
         drug2=drug2
+    )
+
+
+# ============================================================
+# LAB RESULT CHECK (อ่านผลแลป สูง/ต่ำ/ปกติ ผ่าน Prolog)
+# ============================================================
+
+LAB_CHECK_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>อ่านผลแลป | ระบบจัดการยา</title>
+<style>
+  :root{
+    --bg-1:#0f172a; --bg-2:#1e293b;
+    --card:#ffffff; --card-border:#e2e8f0;
+    --normal:#16a34a; --normal-bg:#dcfce7;
+    --high:#dc2626; --high-bg:#fee2e2;
+    --low:#d97706; --low-bg:#fef3c7;
+    --accent:#4f46e5; --accent2:#7c3aed;
+    --text:#0f172a; --muted:#64748b;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:'Segoe UI',-apple-system,'Noto Sans Thai',sans-serif;
+    background:linear-gradient(135deg,var(--bg-1),var(--bg-2) 60%,#312e81);
+    min-height:100vh; padding:32px 16px; color:var(--text);
+  }
+  .wrap{max-width:920px;margin:0 auto;}
+  .top{color:#e2e8f0;margin-bottom:24px;}
+  .top a{color:#c7d2fe;text-decoration:none;font-size:14px;}
+  h1{color:#fff;font-size:28px;margin:8px 0 4px;}
+  .sub{color:#cbd5e1;font-size:14px;margin-bottom:24px;}
+  .card{
+    background:var(--card); border:1px solid var(--card-border);
+    border-radius:18px; padding:24px; box-shadow:0 20px 40px -20px rgba(0,0,0,.5);
+    margin-bottom:20px; animation:fadeUp .5s ease both;
+  }
+  @keyframes fadeUp{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;}
+  label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin-bottom:6px;}
+  input[type=text],input[type=number]{
+    width:100%;padding:12px 14px;border:1.5px solid #e2e8f0;border-radius:10px;
+    font-size:15px;transition:border-color .15s,box-shadow .15s;
+  }
+  input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,70,229,.15);}
+  .unit{font-size:12px;color:var(--muted);margin-top:4px;}
+  .btn{
+    margin-top:20px; background:linear-gradient(135deg,var(--accent),var(--accent2));
+    color:#fff;border:none;padding:14px 28px;border-radius:12px;font-size:16px;font-weight:700;
+    cursor:pointer;transition:transform .15s,box-shadow .15s;
+  }
+  .btn:hover{transform:translateY(-2px);box-shadow:0 10px 20px -8px rgba(79,70,229,.6);}
+  .lab-result{
+    border-radius:16px;padding:18px 20px;margin-bottom:14px;border:1px solid var(--card-border);
+    display:flex;flex-direction:column;gap:8px;animation:fadeUp .45s ease both;
+  }
+  .lab-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;}
+  .lab-name{font-weight:700;font-size:16px;}
+  .badge{
+    padding:5px 14px;border-radius:999px;font-size:13px;font-weight:700;letter-spacing:.2px;
+  }
+  .badge.normal{background:var(--normal-bg);color:var(--normal);}
+  .badge.high{background:var(--high-bg);color:var(--high);}
+  .badge.low{background:var(--low-bg);color:var(--low);}
+  .lab-value{font-size:22px;font-weight:800;}
+  .lab-desc{color:var(--muted);font-size:14px;}
+  .range-bar{position:relative;height:10px;border-radius:999px;background:#e2e8f0;margin-top:6px;overflow:hidden;}
+  .range-fill{position:absolute;top:0;bottom:0;border-radius:999px;transition:width .6s ease;}
+  .range-fill.normal{background:var(--normal);}
+  .range-fill.high{background:var(--high);}
+  .range-fill.low{background:var(--low);}
+  .range-labels{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px;}
+  .adj-card{
+    border-radius:14px;padding:16px 18px;margin-bottom:12px;border:1px solid #fecaca;
+    background:#fff7f5;animation:fadeUp .45s ease both;
+  }
+  .adj-card.danger{border-color:#fca5a5;background:#fef2f2;}
+  .adj-card.contraindicated{border-color:#fca5a5;background:#fef2f2;}
+  .adj-card.caution{border-color:#fde68a;background:#fffbeb;}
+  .adj-drug{font-weight:700;font-size:15px;margin-bottom:4px;}
+  .adj-sev{display:inline-block;font-size:11px;font-weight:700;text-transform:uppercase;
+    padding:2px 8px;border-radius:6px;background:#fff;border:1px solid currentColor;margin-bottom:6px;}
+  .adj-text{font-size:14px;color:#334155;line-height:1.5;}
+  .empty{color:var(--muted);font-size:14px;text-align:center;padding:20px 0;}
+  .error{background:#fee2e2;color:#991b1b;padding:14px 18px;border-radius:12px;margin-bottom:16px;font-size:14px;}
+  .disclaimer{font-size:12px;color:#94a3b8;margin-top:18px;line-height:1.5;}
+  .section-title{font-size:14px;font-weight:700;color:var(--muted);margin:0 0 12px;text-transform:uppercase;letter-spacing:.5px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><a href="/">&larr; กลับหน้าหลัก</a></div>
+  <h1>🧪 อ่านผลแลป</h1>
+  <div class="sub">กรอกค่าแลปเพื่อดูว่าสูง/ต่ำ/ปกติ พร้อมคำแนะนำปรับยาอัตโนมัติ (อ้างอิงจาก drug_interaction.pl)</div>
+
+  {% if error %}
+  <div class="error">⚠️ {{ error }}</div>
+  {% endif %}
+
+  <form class="card" method="POST" action="/lab-check">
+    <div class="section-title">ค่าแลป</div>
+    <div class="grid">
+      {% for key, meta in lab_definitions.items() %}
+      <div>
+        <label>{{ meta.label }}</label>
+        <input type="number" step="any" name="lab_{{ key }}" placeholder="{{ meta.placeholder }}"
+               value="{{ form_values.get('lab_' + key, '') }}">
+        <div class="unit">หน่วย: {{ meta.unit }} — เว้นว่างได้ถ้าไม่มีผล</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div style="margin-top:20px;">
+      <label>รายชื่อยาที่ผู้ป่วยใช้อยู่ (คั่นด้วยเครื่องหมายจุลภาค ",")</label>
+      <input type="text" name="drugs" placeholder="เช่น spironolactone, enalapril, simvastatin"
+             value="{{ form_values.get('drugs', '') }}">
+      <div class="unit">ใส่เพื่อให้ระบบแนะนำการปรับยาตามผลแลปโดยอัตโนมัติ (ไม่บังคับ)</div>
+    </div>
+
+    <button class="btn" type="submit">อ่านผลแลป</button>
+  </form>
+
+  {% if labs is not none %}
+  <div class="card">
+    <div class="section-title">ผลการอ่านค่าแลป</div>
+    {% if labs %}
+      {% for lab in labs %}
+      <div class="lab-result" style="background:var(--{{ lab.status }}-bg,#f8fafc);">
+        <div class="lab-head">
+          <div class="lab-name">{{ lab_definitions.get(lab.key, {}).get('label', lab.key) }}</div>
+          <span class="badge {{ lab.status }}">{{ status_labels.get(lab.status, {}).get('text', lab.status) }}</span>
+        </div>
+        <div class="lab-value">{{ lab.value }} <span style="font-size:14px;font-weight:500;color:var(--muted);">{{ lab.unit }}</span></div>
+        <div class="lab-desc">{{ lab.description }}</div>
+        <div class="range-bar">
+          <div class="range-fill {{ lab.status }}" style="width:{{ lab.bar_pct }}%;"></div>
+        </div>
+        <div class="range-labels"><span>ค่าปกติ: {{ lab.normal_low }} – {{ lab.normal_high }} {{ lab.unit }}</span></div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty">ยังไม่มีผลแลปที่อ่านได้ ลองกรอกค่าอย่างน้อย 1 รายการ</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <div class="section-title">คำแนะนำปรับยาตามผลแลป</div>
+    {% if adjustments %}
+      {% for adj in adjustments %}
+      <div class="adj-card {{ adj.severity }}">
+        <div class="adj-sev" style="color:{{ '#dc2626' if adj.severity in ['danger','contraindicated'] else '#d97706' }};">{{ adj.severity }}</div>
+        <div class="adj-drug">{{ adj.drug }} &times; {{ adj.lab_label }}</div>
+        <div class="adj-text">{{ adj.recommendation }}</div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty">ไม่พบคำแนะนำปรับยาสำหรับค่าที่กรอก (หรือยังไม่ได้ใส่รายชื่อยา)</div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="disclaimer">
+    ⚠️ ผลจากหน้านี้เป็นการอ้างอิง threshold เบื้องต้นเพื่อความปลอดภัยเท่านั้น
+    ไม่ใช่คำวินิจฉัยทางการแพทย์ โปรดให้เภสัชกร/แพทย์ตรวจทานก่อนใช้ตัดสินใจทางคลินิกจริง
+  </div>
+</div>
+</body>
+</html>
+"""
+
+
+def _lab_bar_percent(lab_result):
+    """คำนวณตำแหน่ง % บนแถบสำหรับแสดงผล (0-100) โดยเทียบกับช่วงปกติ"""
+    try:
+        low = float(lab_result["normal_low"])
+        high = float(lab_result["normal_high"])
+        value = float(lab_result["value"])
+    except (TypeError, ValueError):
+        return 50
+
+    if high <= low:
+        return 50
+
+    span = high - low
+    padded_low = low - span * 0.5
+    padded_high = high + span * 0.5
+    padded_span = padded_high - padded_low
+    if padded_span <= 0:
+        return 50
+
+    pct = (value - padded_low) / padded_span * 100
+    return max(2, min(98, round(pct, 1)))
+
+
+@app.route("/lab-check", methods=["GET", "POST"])
+def lab_check():
+
+    labs = None
+    adjustments = []
+    error = None
+    form_values = {}
+
+    if request.method == "POST":
+        form_values = request.form.to_dict()
+
+        lab_values = {}
+        for key in LAB_DEFINITIONS:
+            raw = request.form.get("lab_{}".format(key), "").strip()
+            if raw:
+                lab_values[key] = raw
+
+        drugs_raw = request.form.get("drugs", "")
+        drug_names = [
+            name.strip()
+            for name in drugs_raw.split(",")
+            if name.strip()
+        ]
+
+        try:
+            result = check_lab_values(lab_values, drug_names)
+            labs = result["labs"]
+            for lab in labs:
+                lab["bar_pct"] = _lab_bar_percent(lab)
+            adjustments = result["adjustments"]
+        except Exception as e:
+            error = "ไม่สามารถอ่านผลแลปได้: {}".format(e)
+            labs = []
+
+    return render_template_string(
+        LAB_CHECK_TEMPLATE,
+        lab_definitions=LAB_DEFINITIONS,
+        status_labels=LAB_STATUS_LABELS,
+        labs=labs,
+        adjustments=adjustments,
+        error=error,
+        form_values=form_values,
     )
 
 
