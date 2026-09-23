@@ -941,48 +941,66 @@ def check_drug_interactions(drug_names):
 
 
 # ============================================================
-# LAB-BASED DOSE ADJUSTMENT / ALTERNATIVE DRUG SUGGESTION
-# rule-based จาก eGFR (renal function) - ไม่ใช้ AI/ML
-# แนวทางเดียวกับ Drug Interaction: เขียนเป็นกฎ if-then ชัดเจน
-# ตรวจสอบ/แก้ไขได้ง่าย และทีมเภสัชกรสามารถ review เกณฑ์ได้ตรงๆ
+# LAB-BASED DOSE ADJUSTMENT (eGFR) - rule-based, ไม่ใช้ AI/ML
 #
-# หมายเหตุ: ค่า threshold / คำแนะนำด้านล่างเป็นตัวอย่างเริ่มต้นเท่านั้น
-# ต้องให้เภสัชกร/แพทย์ที่ปรึกษาโปรเจกต์ตรวจทานก่อนใช้งานจริง
+# ⚠️ สำคัญ: ค่า threshold / ข้อความด้านล่างอ้างอิงจากแหล่งข้อมูลทั่วไป
+# (product label, standard renal-dosing references) เพื่อความถูกต้องระดับ
+# หลักการเท่านั้น ไม่ใช่คำวินิจฉัย/สั่งการรักษาจริง และ "ยาทดแทน" ที่ระบบ
+# แนะนำได้แบบมั่นใจ ณ ตอนนี้มีเฉพาะกรณีที่มีหลักฐานชัดเจนพอเท่านั้น
+# (spironolactone มี fact ในไฟล์ interaction ที่ contraindicate ชัดเจนอยู่แล้ว
+# ที่ eGFR<30 - ดู HPRA/FDA labeling) ส่วนกรณีอื่นที่ยังไม่มีฐานข้อมูลยา
+# ทดแทนที่ตรวจสอบแล้วในระบบ (เช่นชนิดยาที่ยังไม่มีอยู่ใน PROLOG_DRUG_ATOMS)
+# ระบบจะ "ไม่ฟันธง" ว่าควรเปลี่ยนเป็นยาอะไร แต่จะส่งต่อให้แพทย์ตัดสินใจแทน
+# เพื่อกันการแนะนำยาทดแทนที่ไม่ผ่านการตรวจสอบทางคลินิกจริง
+#
+# ทีมเภสัชกร/แพทย์ที่ปรึกษาโปรเจกต์ต้องตรวจทาน threshold และคำแนะนำทั้งหมด
+# นี้ก่อนใช้งานกับผู้ป่วยจริงเสมอ
 # ============================================================
 
 EGFR_DOSE_RULES = {
-    # atom (ตาม PROLOG_DRUG_ATOMS): [ (min_egfr_exclusive_of_prev, max_egfr, action) ... ]
-    # เรียงจาก eGFR ต่ำสุด -> สูงสุด, ใช้ช่วงแรกที่ egfr <= max_egfr
-    "metformin_placeholder": [],  # ตัวอย่างโครงสร้าง เผื่อเพิ่ม metformin ในอนาคต
+    # atom (ตาม PROLOG_DRUG_ATOMS): [ (min_egfr, max_egfr, action) ... ]
     "glipizide": [
-        (0, 30, "ควรหลีกเลี่ยงหรือลดขนาดยา และติดตามภาวะน้ำตาลต่ำใกล้ชิด (eGFR < 30)"),
-        (30, 60, "ควรพิจารณาลดขนาดยาและติดตามอาการ hypoglycemia (eGFR 30-59)"),
+        # Glipizide ถูกเมตาบอไลซ์ที่ตับเป็น inactive metabolite และไม่มีข้อมูล
+        # ว่าเพิ่มความเสี่ยง hypoglycemia อย่างมีนัยสำคัญจากการเสื่อมของไต
+        # จึงเป็นซัลโฟนิลยูเรียที่ "ปลอดภัยกว่า" glyburide/glimepiride ในผู้ป่วย CKD
+        # (ต่างจาก glyburide/glimepiride ที่ควรเลี่ยงเมื่อ eGFR<60/<30 ตามลำดับ)
+        # ยังคงแนะนำเริ่มขนาดต่ำ/ติดตามอาการ hypoglycemia ตามความระมัดระวังทั่วไป
+        (0, 30, "Glipizide ไม่ถูกขับผ่านไตเป็นหลักและไม่มี active metabolite จึงค่อนข้างปลอดภัยกว่าซัลโฟนิลยูเรียตัวอื่นในผู้ป่วยไตเสื่อมรุนแรง แต่ยังควรเริ่มขนาดต่ำและติดตามภาวะน้ำตาลต่ำใกล้ชิด (eGFR < 30)"),
     ],
     "insulin_nph": [
-        (0, 30, "ความต้องการอินซูลินอาจลดลง ควรลดขนาดและติดตามน้ำตาลถี่ขึ้น (eGFR < 30)"),
+        (0, 30, "ความต้องการอินซูลินมักลดลงเมื่อไตเสื่อม ควรพิจารณาลดขนาดและติดตามน้ำตาลถี่ขึ้น (eGFR < 30) — ปรับขนาดตามการตอบสนอง ไม่ใช่เปลี่ยนยา"),
     ],
     "spironolactone": [
-        (0, 30, "ห้ามใช้/ควรเลี่ยง เสี่ยง hyperkalemia รุนแรง (eGFR < 30)"),
-        (30, 50, "ใช้ด้วยความระมัดระวัง ติดตามค่า K+ ใกล้ชิด (eGFR 30-49)"),
+        # อ้างอิง product labeling (เช่น HPRA/FDA): contraindicated เมื่อ severe renal
+        # insufficiency (eGFR < 30) เนื่องจากเสี่ยง hyperkalemia รุนแรงถึงขั้นหัวใจหยุดเต้น
+        (0, 30, "ห้ามใช้ (contraindicated) เสี่ยง hyperkalemia รุนแรง (eGFR < 30 ตาม product labeling)"),
+        (30, 50, "ใช้ด้วยความระมัดระวังสูง ติดตามค่า K+ ใกล้ชิด (eGFR 30-49)"),
     ],
     "amiloride_hydrochlorothiazide": [
-        (0, 30, "ห้ามใช้/ควรเลี่ยง thiazide มักไม่ได้ผลและเสี่ยง hyperkalemia (eGFR < 30)"),
+        (0, 30, "ยากลุ่ม potassium-sparing diuretic ร่วมกับ thiazide ความเสี่ยง hyperkalemia สูงขึ้นมากเมื่อไตเสื่อม ควรเลี่ยง (eGFR < 30)"),
     ],
     "enalapril": [
-        (0, 30, "เริ่มขนาดต่ำและปรับช้าลง ติดตาม K+/Creatinine ใกล้ชิด (eGFR < 30)"),
+        # ACEi/ARB: แนวทางปัจจุบัน (เช่น AAFP, การศึกษา STOP-ACEi) สนับสนุนให้
+        # "คงการใช้ยาต่อพร้อมติดตาม" มากกว่าเปลี่ยนยา ตราบใดที่ eGFR ไม่ลดลง
+        # เกิน 30% ใน 4 เดือน และ K+ < 5.5 mEq/L จึงไม่แนะนำยาทดแทนในกรณีนี้
+        (0, 30, "โดยทั่วไปแนะนำ 'คงการใช้ยาต่อพร้อมติดตามใกล้ชิด' มากกว่าเปลี่ยนยา — เริ่มขนาดต่ำ ติดตาม K+/Creatinine หลังเริ่ม/ปรับยา 2-3 สัปดาห์ (eGFR < 30)"),
     ],
     "captopril": [
-        (0, 30, "เริ่มขนาดต่ำและปรับช้าลง ติดตาม K+/Creatinine ใกล้ชิด (eGFR < 30)"),
+        (0, 30, "โดยทั่วไปแนะนำ 'คงการใช้ยาต่อพร้อมติดตามใกล้ชิด' มากกว่าเปลี่ยนยา — เริ่มขนาดต่ำ ติดตาม K+/Creatinine หลังเริ่ม/ปรับยา 2-3 สัปดาห์ (eGFR < 30)"),
     ],
     "losartan": [
-        (0, 30, "เริ่มขนาดต่ำ ติดตาม K+/Creatinine ใกล้ชิด (eGFR < 30)"),
+        (0, 30, "โดยทั่วไปแนะนำ 'คงการใช้ยาต่อพร้อมติดตามใกล้ชิด' มากกว่าเปลี่ยนยา — เริ่มขนาดต่ำ ติดตาม K+/Creatinine หลังเริ่ม/ปรับยา 2-3 สัปดาห์ (eGFR < 30)"),
     ],
 }
 
-# ยาทางเลือกกลุ่มเดียวกัน เมื่อยาตัวหลักมี contraindication ด้าน renal function
+# "ยาทดแทน" ที่ระบบยืนยันได้ในระดับหลักฐานทั่วไป มีเฉพาะกรณีที่ตัวยาทดแทน
+# เองก็อยู่ใน PROLOG_DRUG_ATOMS ของระบบ (ผ่านการตรวจ interaction ได้ด้วย)
+# เท่านั้น — กรณีอื่นที่ยังไม่มี ให้เว้นว่างไว้เจตนา (ไม่ฟันธงยาที่ระบบตรวจสอบไม่ได้)
+# และ Note ของผลลัพธ์จะบอกผู้ใช้ตรงๆ ว่าไม่มีคำแนะนำยาทดแทนในระบบ ให้แพทย์ตัดสินใจแทน
 EGFR_ALTERNATIVE_SUGGESTIONS = {
-    "glipizide": ["insulin_nph (พิจารณาเปลี่ยนเป็นอินซูลินหาก eGFR ต่ำมาก)"],
-    "spironolactone": ["ปรึกษาแพทย์เรื่องยาขับปัสสาวะกลุ่มอื่นที่ไม่กระทบ K+ มากเท่า"],
+    # ตัวอย่าง: ถ้าในอนาคตเพิ่ม "gliclazide" หรือ furosemide เข้า PROLOG_DRUG_ATOMS
+    # และมี fact ตรวจ interaction ของยานั้นแล้ว ค่อยเติมที่นี่
+    # "spironolactone": ["furosemide"],  # ต้องเพิ่ม atom + interaction facts ก่อน
 }
 
 
@@ -993,6 +1011,9 @@ def check_lab_based_adjustments(patient):
 
     คืนค่าเป็น list ของ dict:
       { "Drug": ..., "Egfr": ..., "Recommendation": ..., "Alternatives": [...] }
+    "Alternatives" จะเป็น list ว่างในกรณีส่วนใหญ่โดยเจตนา เพราะระบบนี้ยังไม่มี
+    ฐานข้อมูลยาทดแทนที่ตรวจสอบทางคลินิกได้ครบถ้วน - ต้องให้แพทย์ตัดสินใจเอง
+    ระบบทำหน้าที่ "แจ้งเตือน" ไม่ใช่ "สั่งเปลี่ยนยาอัตโนมัติ"
 
     ถ้าไม่มีค่า eGFR ในระบบ จะคืน list ว่าง (ไม่ฟันธงโดยไม่มีข้อมูล)
     """
@@ -1017,11 +1038,73 @@ def check_lab_based_adjustments(patient):
 
         for min_egfr, max_egfr, action in EGFR_DOSE_RULES[atom]:
             if min_egfr <= egfr <= max_egfr:
+                alternatives = EGFR_ALTERNATIVE_SUGGESTIONS.get(atom, [])
                 results.append({
                     "Drug": drug_name,
                     "Egfr": egfr,
                     "Recommendation": action,
-                    "Alternatives": EGFR_ALTERNATIVE_SUGGESTIONS.get(atom, []),
+                    "Alternatives": alternatives,
+                    "Alternatives_Note": (
+                        ""
+                        if alternatives
+                        else "ระบบยังไม่มีข้อมูลยาทดแทนที่ตรวจสอบแล้วสำหรับกรณีนี้ กรุณาให้แพทย์พิจารณา"
+                    ),
+                })
+                break
+
+    return results
+
+
+# ============================================================
+# DRUG ALLERGY CHECKING
+# rule-based: เทียบชื่อยาที่สั่งกับประวัติแพ้ยาของผู้ป่วย (คอลัมน์ "แพ้ยา"
+# ที่มีอยู่แล้วในไฟล์ใบสั่งยา แต่ก่อนหน้านี้ยังไม่มีโค้ดส่วนไหนใช้งาน)
+# ใช้ normalize_drug_name() ตัวเดียวกับที่ใช้ตรวจ Drug Interaction
+# เพื่อให้ตรงกันแม้สะกด/เว้นวรรค/ตัวพิมพ์เล็กใหญ่ต่างกัน
+# ============================================================
+
+def check_drug_allergy(patient):
+    """
+    ตรวจว่ายาที่สั่งตัวใดตรงกับประวัติแพ้ยาของผู้ป่วยหรือไม่ (string match
+    แบบ substring หลัง normalize) คืน list ของ dict:
+      { "Drug": ..., "Allergy_Matched": ..., "Note": ... }
+
+    ถ้าไม่มีข้อมูลแพ้ยาในระบบเลย (คอลัมน์ไม่มี หรือกรอกว่า 'ไม่มี') จะคืน
+    list ว่าง ไม่ฟันธง
+    """
+    allergy_list = patient.get("drug_allergy") or []
+    if not allergy_list:
+        return []
+
+    normalized_allergies = [
+        (raw, normalize_drug_name(raw))
+        for raw in allergy_list
+        if normalize_drug_name(raw)
+    ]
+    if not normalized_allergies:
+        return []
+
+    medicines = patient.get("medicines", []) or []
+    results = []
+
+    for medicine in medicines:
+        drug_name = str(medicine.get("name", "") or "").strip()
+        if not drug_name:
+            continue
+
+        normalized_drug = normalize_drug_name(drug_name)
+        if not normalized_drug:
+            continue
+
+        for raw_allergy, normalized_allergy in normalized_allergies:
+            if normalized_allergy in normalized_drug or normalized_drug in normalized_allergy:
+                results.append({
+                    "Drug": drug_name,
+                    "Allergy_Matched": raw_allergy,
+                    "Note": (
+                        "ผู้ป่วยมีประวัติแพ้ยา '{}' ซึ่งตรงกับยาที่สั่งจ่าย "
+                        "ห้ามจ่ายจนกว่าแพทย์จะยืนยัน".format(raw_allergy)
+                    ),
                 })
                 break
 
@@ -1175,6 +1258,27 @@ def parse_icd10_list(value):
     import re
     parts = re.split(r"[,;/]+", text)
     return [p.strip() for p in parts if p.strip()]
+
+
+NO_ALLERGY_TEXTS = {"ไม่มี", "ไม่แพ้", "none", "no", "-", "nil", "n/a", "ไม่มีประวัติ"}
+
+
+def parse_allergy_list(value):
+    """แปลงค่าจากเซลล์ แพ้ยา/Allergy เป็น list ของชื่อยาที่แพ้
+    คืน list ว่างถ้าเซลล์ว่างหรือเป็นข้อความที่แปลว่า 'ไม่มี'"""
+    if value is None:
+        return []
+
+    text = str(value).strip()
+    if not text:
+        return []
+
+    if text.strip().lower() in NO_ALLERGY_TEXTS:
+        return []
+
+    import re
+    parts = re.split(r"[,;/]+", text)
+    return [p.strip() for p in parts if p.strip() and p.strip().lower() not in NO_ALLERGY_TEXTS]
 
 
 # ============================================================
@@ -1820,6 +1924,20 @@ def read_prescription_excel(
     )
 
 
+    # เพิ่มสำหรับ Drug Allergy checking
+    allergy_col = find_column(
+        headers,
+        [
+            "แพ้ยา",
+            "ประวัติแพ้ยา",
+            "Allergy",
+            "allergy",
+            "Drug Allergy",
+            "drug_allergy"
+        ]
+    )
+
+
     if hn_col is None:
 
         wb.close()
@@ -1960,6 +2078,14 @@ def read_prescription_excel(
                     egfr_value = None
 
 
+            # เพิ่มสำหรับ Drug Allergy checking
+            drug_allergy = []
+            if allergy_col:
+                drug_allergy = parse_allergy_list(
+                    row_dict.get(allergy_col)
+                )
+
+
             patients[hn] = {
 
                 "hn": hn,
@@ -1992,6 +2118,9 @@ def read_prescription_excel(
 
                 "egfr":
                     egfr_value,
+
+                "drug_allergy":
+                    drug_allergy,
 
                 "medicines": [],
 
@@ -6958,6 +7087,17 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
   </div>
 
   <div class="section">
+    <h3>🚫 Drug Allergy</h3>
+    {% if patient.allergy_results %}
+      {% for x in patient.allergy_results %}
+      <div class="interaction bad">🚫 <b>{{ x.Drug }}</b> — {{ x.Note }}</div>
+      {% endfor %}
+    {% else %}
+      <div class="summary ok">✅ ไม่พบยาที่ตรงกับประวัติแพ้ยา</div>
+    {% endif %}
+  </div>
+
+  <div class="section">
     <h3>⚕️ Drug Interaction</h3>
     {% if patient.interaction_results %}
       {% for x in patient.interaction_results %}
@@ -6990,7 +7130,8 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
       {% for x in patient.lab_adjustment_results %}
       <div class="interaction bad">
         ❌ <b>{{ x.Drug }}</b> (eGFR {{ x.Egfr }}) — {{ x.Recommendation }}
-        {% if x.Alternatives %}<br>ยาทางเลือก: {{ x.Alternatives|join(', ') }}{% endif %}
+        {% if x.Alternatives %}<br>ยาทางเลือก: {{ x.Alternatives|join(', ') }}
+        {% elif x.Alternatives_Note %}<br><i>{{ x.Alternatives_Note }}</i>{% endif %}
       </div>
       {% endfor %}
     {% else %}
@@ -7046,6 +7187,7 @@ def _prepare_unified_result_patient(patient):
     # Diagnosis/ICD10 และ/หรือ eGFR เท่านั้น ถ้าไม่มีคอลัมน์เหล่านี้จะคืน list ว่าง
     patient["indication_results"] = check_drug_indications(patient)
     patient["lab_adjustment_results"] = check_lab_based_adjustments(patient)
+    patient["allergy_results"] = check_drug_allergy(patient)
 
     # สร้าง Consult PDF ใบเดียวเมื่อมี Days Supply หรือ Drug Interaction
     # (ไม่รวม Stock ใน Consult)
@@ -7062,8 +7204,11 @@ def _prepare_unified_result_patient(patient):
     has_lab_issue = bool(
         patient.get("lab_adjustment_results", []) or []
     )
+    has_allergy_issue = bool(
+        patient.get("allergy_results", []) or []
+    )
 
-    if has_days_problem or has_interaction or has_indication_issue or has_lab_issue:
+    if has_days_problem or has_interaction or has_indication_issue or has_lab_issue or has_allergy_issue:
         try:
             # ลืม/ไม่ใช้ PDF Consult เก่าทันทีที่เตรียมผลใหม่
             # เพื่อบังคับให้สร้าง PDF จาก interaction_results ชุดล่าสุด
@@ -7098,6 +7243,7 @@ def _prepare_unified_result_patient(patient):
         or patient.get("interaction_results", [])
         or patient.get("indication_results", [])
         or patient.get("lab_adjustment_results", [])
+        or patient.get("allergy_results", [])
     )
     patient["consult_approved"] = bool(patient.get("_consult_approved", False))
     return patient
