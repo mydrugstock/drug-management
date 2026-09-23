@@ -39,6 +39,7 @@ import tempfile
 import sqlite3
 import json
 import shutil
+import subprocess
 
 from datetime import datetime, date
 
@@ -86,6 +87,32 @@ INTERACTION_FILE_FALLBACK = os.path.join(
     BASE_DIR,
     "drug_interactions.xlsx"
 )
+
+# ============================================================
+# PROLOG DRUG INTERACTION (ใช้ swipl เป็น subprocess)
+# ไม่โหลด PySWIP เข้า process ของ Flask เพื่อไม่ให้กระทบ openpyxl/Excel
+# ============================================================
+PROLOG_FILE = os.path.join(BASE_DIR, "drug_interaction.pl")
+
+PROLOG_DRUG_ATOMS = {
+    "amiloride+hydrochlorothiazide": "amiloride_hydrochlorothiazide",
+    "amiloride_hydrochlorothiazide": "amiloride_hydrochlorothiazide",
+    "spironolactone": "spironolactone",
+    "atenolol": "atenolol",
+    "methyldopa": "methyldopa",
+    "captopril": "captopril",
+    "losartan": "losartan",
+    "enalapril": "enalapril",
+    "carvedilol": "carvedilol",
+    "metoprolol": "metoprolol",
+    "pioglitazone": "pioglitazone",
+    "glipizide": "glipizide",
+    "propranolol": "propranolol",
+    "insulin_nph": "insulin_nph",
+    "simvastatin": "simvastatin",
+    "amlodipine": "amlodipine",
+}
+
 
 
 # ไฟล์ต้นฉบับใบสั่งยาที่ระบบเก็บไว้เพื่อ Sync แบบ Real-time
@@ -651,42 +678,142 @@ def load_interactions():
 # CHECK DRUG INTERACTIONS
 # ============================================================
 
-def check_drug_interactions(
-    drug_names
-):
+def resolve_prolog_drug(name):
+    normalized = normalize_drug_name(name)
+    if not normalized:
+        return None
+    for normalized_atom, atom in PROLOG_DRUG_ATOMS.items():
+        atom_norm = normalize_drug_name(normalized_atom)
+        if normalized == atom_norm or (atom_norm and atom_norm in normalized):
+            return atom
+    return None
 
-    interactions = load_interactions()
+
+def _prolog_query_pair(atom_a, atom_b):
+    """เรียก SWI-Prolog แยก process เพื่อไม่ให้ DLL ของ PySWIP ชนกับ Flask/openpyxl"""
+    if not os.path.exists(PROLOG_FILE):
+        raise FileNotFoundError(
+            "ไม่พบไฟล์ drug_interaction.pl ที่: {}".format(PROLOG_FILE)
+        )
+
+    swipl = shutil.which("swipl")
+
+    # ถ้าไม่ได้อยู่ใน PATH ให้ค้นหาตำแหน่งติดตั้ง SWI-Prolog ที่พบบ่อยบน Windows
+    if not swipl:
+        possible_paths = [
+            os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
+                         "swipl", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
+                         "SWI-Prolog", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
+                         "swipl", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
+                         "SWI-Prolog", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                         "swipl", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                         "SWI-Prolog", "bin", "swipl.exe"),
+        ]
+
+        for candidate in possible_paths:
+            if candidate and os.path.isfile(candidate):
+                swipl = candidate
+                break
+
+    if not swipl:
+        raise RuntimeError(
+            "ไม่พบ swipl.exe ของ SWI-Prolog "
+            "กรุณาติดตั้ง SWI-Prolog หรือแจ้งตำแหน่งที่ติดตั้ง"
+        )
+
+    # atom_a/atom_b มาจาก whitelist เท่านั้น จึงปลอดภัยที่จะนำไปสร้าง goal
+    # ให้ goal สำเร็จเสมอ แม้คู่นี้จะไม่มียาชนกัน
+    # ถ้า check_interaction/5 fail โดยตรง SWI-Prolog จะคืน returncode=1
+    # ทำให้ Python เข้าใจผิดว่าเป็น error
+    goal = (
+        "(check_interaction({}, {}, Risk, Severity, Warning) -> "
+        "format('FOUND\\t~w\\t~w\\t~w', [Risk, Severity, Warning]) ; "
+        "write('NONE')), halt(0)"
+    ).format(atom_a, atom_b)
+
+    print("=== SEND TO PROLOG ===")
+    print("Drug A:", atom_a)
+    print("Drug B:", atom_b)
+    print("Goal:", goal)
+
+    proc = subprocess.run(
+        [swipl, "-q", "-f", "none", "-s", PROLOG_FILE, "-g", goal],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+        cwd=BASE_DIR,
+    )
+
+    print("=== PROLOG RESULT ===")
+    print("Return code:", proc.returncode)
+    print("stdout:", proc.stdout.strip())
+    print("stderr:", proc.stderr.strip())
+
+    if proc.returncode != 0:
+        err = proc.stderr.strip() or proc.stdout.strip() or "(ไม่มีข้อความจาก SWI-Prolog)"
+        raise RuntimeError(
+            "SWI-Prolog error while checking {} + {}: {}".format(
+                atom_a, atom_b, err
+            )
+        )
+
+    output = proc.stdout.strip()
+    if output == "NONE" or not output:
+        return None
+
+    parts = output.split("\t", 3)
+    if len(parts) != 4 or parts[0] != "FOUND":
+        return None
+
+    return {
+        "Risk": parts[1],
+        "Severity": parts[2],
+        "Warning": parts[3],
+    }
+
+
+def check_drug_interactions(drug_names):
+    """ตรวจ interaction จากรายการยาโดยใช้ drug_interaction.pl ผ่าน SWI-Prolog"""
+    resolved = []
+    seen_atoms = set()
+
+    for original_name in drug_names or []:
+        atom = resolve_prolog_drug(original_name)
+        if atom and atom not in seen_atoms:
+            resolved.append((str(original_name).strip(), atom))
+            seen_atoms.add(atom)
+
     results = []
+    seen_pairs = set()
 
-    normalized_names = [
-        normalize_drug_name(name)
-        for name in drug_names
-        if name
-    ]
+    for i in range(len(resolved)):
+        original_a, atom_a = resolved[i]
+        for j in range(i + 1, len(resolved)):
+            original_b, atom_b = resolved[j]
+            pair = frozenset((atom_a, atom_b))
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
 
-    for interaction in interactions:
-        drug1 = interaction.get("Drug_1", "")
-        drug2 = interaction.get("Drug_2", "")
-
-        drug1_norm = normalize_drug_name(drug1)
-        drug2_norm = normalize_drug_name(drug2)
-
-        # รองรับชื่อยาจาก prescription ที่อาจมีขนาดยา/รูปแบบยา เช่น
-        # "Simvastatin 20 mg" หรือ "Amlodipine 5mg tablet"
-        # จึงไม่จำเป็นต้องตรงกันแบบ 100% กับฐานข้อมูล
-        drug1_found = any(
-            drug1_norm == name_norm
-            or (drug1_norm and drug1_norm in name_norm)
-            for name_norm in normalized_names
-        )
-        drug2_found = any(
-            drug2_norm == name_norm
-            or (drug2_norm and drug2_norm in name_norm)
-            for name_norm in normalized_names
-        )
-
-        if drug1_found and drug2_found:
-            results.append(interaction)
+            data = _prolog_query_pair(atom_a, atom_b)
+            if data:
+                results.append({
+                    "Drug_1": original_a,
+                    "Drug_2": original_b,
+                    "Risk": data["Risk"],
+                    "Severity": data["Severity"],
+                    "Summary": data["Warning"],
+                    "Management": "",
+                    "Reference": "Prolog: drug_interaction.pl",
+                })
 
     return results
 
@@ -698,30 +825,19 @@ def check_drug_interactions(
 def check_patient_drug_interactions(patient):
     """
     ตรวจ Drug Interaction เฉพาะยาที่มีช่วงการใช้ยาทับซ้อนกันจริง
-    ของ HN เดียวกัน
-
-    ลำดับ:
-        1. ใช้ dispense_date ของ HN เป็นวันเริ่มยา
-        2. คำนวณวันใช้ยาจาก quantity / times_per_day
-        3. หาวันสิ้นสุดของยาแต่ละตัว
-        4. ตรวจว่าช่วงวันของยาคู่ใดทับซ้อนกันหรือไม่
-        5. ถ้าทับซ้อน จึงนำคู่นั้นไปตรวจใน drug_interactions.xlsx
+    โดยใช้วันที่/จำนวนยาจาก prescription เดิม และให้ Prolog ตรวจคู่ยา
     """
     medicines = patient.get("medicines", []) or []
-    interactions = load_interactions()
 
     if len(medicines) < 2:
         return []
 
-    # ใช้วันที่ของ HN นี้โดยตรง และคำนวณใหม่ทุกครั้ง
     dispense_date = patient.get("dispense_date_raw") or patient.get("dispense_date", "")
     appointment_date = patient.get("appointment_date_raw") or patient.get("appointment_date", "")
 
     default_start = parse_date_value(dispense_date)
     appointment = parse_date_value(appointment_date)
 
-    # ถ้าวันที่ของ HN ไม่ครบ ให้ยังตรวจ interaction จากรายการยาทั้งหมดได้
-    # เพื่อไม่ให้ข้อมูลยาชนกันหายจาก Consult PDF
     if default_start is None or appointment is None or appointment < default_start:
         drug_names = [
             str(m.get("name", "") or "").strip()
@@ -730,10 +846,7 @@ def check_patient_drug_interactions(patient):
         ]
         return check_drug_interactions(drug_names)
 
-    # เก็บจำนวนวันของ HN นี้ไว้ชัดเจน
     patient["required_days"] = calculate_days_between(dispense_date, appointment_date)
-
-    # สร้างช่วงวันใช้ยาของแต่ละรายการ
     medication_ranges = []
 
     for medicine in medicines:
@@ -741,21 +854,16 @@ def check_patient_drug_interactions(patient):
         if not name:
             continue
 
-        start = parse_date_value(
-            medicine.get("start_date", "")
-        ) or default_start
+        start = parse_date_value(medicine.get("start_date", "")) or default_start
 
         try:
             quantity = float(medicine.get("quantity", 0) or 0)
         except Exception:
             quantity = 0
-
         try:
             times = float(medicine.get("times_per_day", 0) or 0)
         except Exception:
             times = 0
-
-        # ถ้าข้อมูลยังไม่มี days_supply ให้คำนวณใหม่จากจำนวนยา/ครั้งต่อวัน
         try:
             days_supply = float(medicine.get("days_supply", 0) or 0)
         except Exception:
@@ -763,7 +871,6 @@ def check_patient_drug_interactions(patient):
 
         if days_supply <= 0 and quantity > 0 and times > 0:
             days_supply = quantity / times
-
         if days_supply <= 0:
             continue
 
@@ -771,14 +878,9 @@ def check_patient_drug_interactions(patient):
         duration_days = max(1, math.ceil(days_supply))
         end = start + __import__("datetime").timedelta(days=duration_days - 1)
 
-        medication_ranges.append({
-            "name": name,
-            "start": start,
-            "end": end
-        })
+        medication_ranges.append({"name": name, "start": start, "end": end})
 
     if len(medication_ranges) < 2:
-        # ถ้าคำนวณช่วงวันไม่ได้ครบ ให้ตรวจจากชื่อยาที่มีอยู่แทน
         drug_names = [m["name"] for m in medication_ranges]
         if len(drug_names) < 2:
             drug_names = [
@@ -788,44 +890,25 @@ def check_patient_drug_interactions(patient):
             ]
         return check_drug_interactions(drug_names)
 
-    # ตรวจคู่ยาเฉพาะคู่ที่ช่วงวันทับซ้อนกัน
-    active_pairs = set()
+    active_drug_names = []
+    seen_names = set()
     for i in range(len(medication_ranges)):
         for j in range(i + 1, len(medication_ranges)):
             a = medication_ranges[i]
             b = medication_ranges[j]
-
             overlap_start = max(a["start"], b["start"])
             overlap_end = min(a["end"], b["end"])
-
             if overlap_start <= overlap_end:
-                pair = frozenset((
-                    normalize_drug_name(a["name"]),
-                    normalize_drug_name(b["name"])
-                ))
-                active_pairs.add(pair)
+                for item in (a["name"], b["name"]):
+                    key = normalize_drug_name(item)
+                    if key and key not in seen_names:
+                        seen_names.add(key)
+                        active_drug_names.append(item)
 
-    if not active_pairs:
-        # ไม่มีคู่ที่คำนวณช่วงวันได้ แต่ยังมีรายการยา 2 ตัวขึ้นไป
-        # ให้ตรวจ interaction จากชื่อยาโดยตรง เพื่อไม่ให้ Consult ว่าง
-        drug_names = [m["name"] for m in medication_ranges]
-        return check_drug_interactions(drug_names)
+    if len(active_drug_names) < 2:
+        return []
 
-    results = []
-    seen = set()
-
-    for interaction in interactions:
-        drug1 = interaction.get("Drug_1", "")
-        drug2 = interaction.get("Drug_2", "")
-        drug1_norm = normalize_drug_name(drug1)
-        drug2_norm = normalize_drug_name(drug2)
-
-        pair = frozenset((drug1_norm, drug2_norm))
-        if pair in active_pairs and pair not in seen:
-            results.append(interaction)
-            seen.add(pair)
-
-    return results
+    return check_drug_interactions(active_drug_names)
 
 
 # ============================================================
@@ -4485,6 +4568,11 @@ def register_thai_fonts():
 
 
     possible_normal_fonts = [
+        os.path.join(BASE_DIR, "static", "fonts", "NotoSansThai-Regular.ttf"),
+        os.path.join(BASE_DIR, "static", "fonts", "THSarabunNew.ttf"),
+
+        "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansThai-Regular.ttf",
 
         r"C:\Windows\Fonts\THSarabunNew.ttf",
 
@@ -4502,6 +4590,11 @@ def register_thai_fonts():
 
 
     possible_bold_fonts = [
+        os.path.join(BASE_DIR, "static", "fonts", "NotoSansThai-Bold.ttf"),
+        os.path.join(BASE_DIR, "static", "fonts", "THSarabunNew-Bold.ttf"),
+
+        "/usr/share/fonts/truetype/noto/NotoSansThai-Bold.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansThai-Bold.ttf",
 
         r"C:\Windows\Fonts\THSarabunNew-Bold.ttf",
 
@@ -4575,6 +4668,15 @@ def register_thai_fonts():
 
 
     if normal_font is None:
+
+        print(
+            "WARNING: No Thai font file found (looked in {}). "
+            "Falling back to Helvetica, which cannot render Thai text - "
+            "Thai characters in the PDF will be blank. Place a Thai .ttf "
+            "font (e.g. NotoSansThai-Regular.ttf) in static/fonts/.".format(
+                os.path.join(BASE_DIR, "static", "fonts")
+            )
+        )
 
         normal_font = "Helvetica"
 
@@ -4718,48 +4820,69 @@ def update_queue_patient(queue_id, patient):
 
 def create_days_supply_consult_pdf(patient):
     """
-    สร้าง Consult PDF ใบเดียว รวม:
-    1) Days Supply
-    2) Drug Interaction
-
-    ไม่รวม Stock ใน Consult PDF
+    สร้าง Consult PDF จากข้อมูล patient ของ HN เดียวโดยตรง
+    รวมข้อมูลผู้ป่วย + รายการยาทั้งหมด + Days Supply + Drug Interaction
     """
     try:
-        hn = str(patient.get("hn", "")).strip()
-        patient_name = patient.get("name", "")
-        age = patient.get("age", "")
-        dispense_date = patient.get("dispense_date", "") or "ไม่ได้ระบุ"
-        appointment_date = patient.get("appointment_date", "") or "ไม่ได้ระบุ"
-        required_days = patient.get("required_days", 0)
+        # --------------------------------------------------------
+        # 1) เตรียมข้อมูลผู้ป่วยจาก patient โดยตรง
+        # --------------------------------------------------------
+        hn = str(patient.get("hn", "") or "").strip()
+        patient_name = str(patient.get("name", "") or "").strip() or "ไม่ได้ระบุ"
+        age = str(patient.get("age", "") or "").strip() or "ไม่ได้ระบุ"
 
-        # ตรวจ Interaction จากรายการยาจริงของ HN ใหม่ทุกครั้งก่อนสร้าง PDF
-        direct_drug_names = [
+        dispense_date = str(
+            patient.get("dispense_date", "")
+            or patient.get("dispense_date_raw", "")
+            or "ไม่ได้ระบุ"
+        ).strip()
+        appointment_date = str(
+            patient.get("appointment_date", "")
+            or patient.get("appointment_date_raw", "")
+            or "ไม่ได้ระบุ"
+        ).strip()
+
+        # คำนวณใหม่จากวันที่ของ HN นี้ เพื่อไม่ใช้ค่าค้างจากผู้ป่วยคนอื่น
+        calculate_days_check(patient)
+        required_days = patient.get("required_days", 0) or 0
+
+        medicines = list(patient.get("medicines", []) or [])
+        if not medicines:
+            raise ValueError("ไม่พบรายการยาใน patient ของ HN {}".format(hn))
+
+        # --------------------------------------------------------
+        # 2) ตรวจ Interaction จากยาของ HN นี้โดยตรง
+        # --------------------------------------------------------
+        drug_names = [
             str(m.get("name", "") or "").strip()
-            for m in (patient.get("medicines", []) or [])
+            for m in medicines
             if str(m.get("name", "") or "").strip()
             and str(m.get("name", "") or "").strip() != "ไม่ได้ระบุ"
         ]
-        if len(direct_drug_names) >= 2:
-            interactions = check_drug_interactions(direct_drug_names)
-        else:
+        interactions = check_drug_interactions(drug_names) if len(drug_names) >= 2 else []
+        if not interactions:
             interactions = patient.get("interaction_results", []) or []
         patient["interaction_results"] = interactions
 
-        has_days_problem = bool(patient.get("days_supply_has_problem", False))
+        has_days_problem = bool(
+            patient.get("days_supply_has_problem", False)
+            or patient.get("days_check_required", False)
+        )
         has_interaction = bool(interactions)
 
         if not has_days_problem and not has_interaction:
             return None
 
+        # --------------------------------------------------------
+        # 3) สร้าง PDF ใหม่ทุกครั้งจาก patient ล่าสุด
+        # --------------------------------------------------------
         filename = "Medication_Consult_HN_{}_{}.pdf".format(
             hn.replace(" ", "_"),
-            datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            datetime.now().strftime("%Y%m%d_%H%M%S")
         )
-
         pdf_path = os.path.join(CONSULT_FOLDER, filename)
 
         normal_font, bold_font = register_thai_fonts()
-
         pdf = canvas.Canvas(pdf_path, pagesize=A4)
         width, height = A4
         y = height - 50
@@ -4770,324 +4893,208 @@ def create_days_supply_consult_pdf(patient):
                 return height - 50
             return current_y
 
-        def draw_red_wrapped(text_line, x=70, font_size=14, leading=18):
+        def draw_line(text, x=60, font=None, size=14, leading=20):
             nonlocal y
             y = page_space(y, 55)
-            pdf.setFillColorRGB(1, 0, 0)
-            y = draw_wrapped_text(
-                pdf,
-                text_line,
-                x,
-                y,
-                70,
-                bold_font,
-                font_size,
-                leading
-            )
-            pdf.setFillColorRGB(0, 0, 0)
+            pdf.setFont(font or normal_font, size)
+            y = draw_wrapped_text(pdf, str(text), x, y, 75,
+                                  font or normal_font, size, leading)
 
-        # ========================================================
+        def fmt(v, default="ไม่ได้ระบุ"):
+            if v is None or str(v).strip() == "":
+                return default
+            return format_quantity(v) if isinstance(v, (int, float)) else str(v)
+
+        # --------------------------------------------------------
         # HEADER
-        # ========================================================
+        # --------------------------------------------------------
         pdf.setFillColorRGB(0, 0, 0)
         pdf.setFont(bold_font, 22)
         pdf.drawCentredString(width / 2, y, "MEDICATION CONSULT")
-
         y -= 30
         pdf.setFont(bold_font, 17)
-
         if has_days_problem and has_interaction:
             subtitle = "บันทึกปรึกษาปัญหา Days Supply และ Drug Interaction"
         elif has_interaction:
             subtitle = "บันทึกปรึกษาปัญหายาระหว่างยา (Drug Interaction)"
         else:
             subtitle = "บันทึกปรึกษาความสัมพันธ์ระหว่างจำนวนยาและวันนัด"
-
         pdf.drawCentredString(width / 2, y, subtitle)
         y -= 40
 
-        # ========================================================
-        # PATIENT INFORMATION
-        # ========================================================
+        # --------------------------------------------------------
+        # PATIENT INFORMATION - ต้องใช้ค่าจริงจาก patient
+        # --------------------------------------------------------
         for label, value in [
-            ("HN", hn),
-            ("ชื่อผู้ป่วย", patient_name or "ไม่ได้ระบุ"),
-            ("อายุ", age or "ไม่ได้ระบุ"),
+            ("HN", hn or "ไม่ได้ระบุ"),
+            ("ชื่อผู้ป่วย", patient_name),
+            ("อายุ", age),
             ("วันที่จ่ายยา", dispense_date),
             ("วันนัด", appointment_date),
-            ("จำนวนวันที่ต้องใช้", format_quantity(required_days) + " วัน")
+            ("จำนวนวันที่ต้องใช้", "{} วัน".format(fmt(required_days)))
         ]:
-            y = page_space(y, 70)
-            y = draw_wrapped_text(
-                pdf,
-                "{}: {}".format(label, value),
-                60,
-                y,
-                75,
-                normal_font,
-                14,
-                19
-            )
+            draw_line("{}: {}".format(label, value))
 
-        # ========================================================
-        # DAYS SUPPLY
-        # ========================================================
+        # --------------------------------------------------------
+        # DAYS SUPPLY - แสดงยาทุกตัวของ HN ไม่ใช่เฉพาะตัวที่ผิด
+        # --------------------------------------------------------
         if has_days_problem:
             y -= 15
             y = page_space(y, 100)
-            pdf.setFillColorRGB(0, 0, 0)
             pdf.setFont(bold_font, 17)
             pdf.drawString(50, y, "1. DAYS SUPPLY")
             y -= 28
 
-            problem_items = [
-                item for item in patient.get("days_check_results", [])
-                if item.get("decision") in {"increase", "decrease", "consult"}
-            ]
+            # ใช้ผลคำนวณล่าสุด จับคู่ด้วยชื่อยา
+            results = patient.get("days_check_results", []) or []
+            result_by_name = {
+                str(r.get("name", "") or "").strip().lower(): r
+                for r in results
+            }
 
-            for index, item in enumerate(problem_items):
-                y = page_space(y, 160)
+            for index, medicine in enumerate(medicines, start=1):
+                y = page_space(y, 180)
+                name = str(medicine.get("name", "") or "").strip() or "ไม่ได้ระบุ"
+                key = name.lower()
+                item = result_by_name.get(key, {})
 
-                pdf.setFillColorRGB(0, 0, 0)
-                pdf.setFont(bold_font, 16)
-                pdf.drawString(
-                    60,
-                    y,
-                    "รายการยา {}: {}".format(
-                        index + 1,
-                        item.get("name", "")
-                    )
-                )
-                y -= 24
-
-                fields = [
-                    "ขนาดยา: {}".format(
-                        item.get("strength", "ไม่ได้ระบุ") or "ไม่ได้ระบุ"
-                    ),
-                    "ครั้งต่อวัน: {} ครั้ง".format(
-                        item.get("times_per_day", "ไม่ได้ระบุ")
-                    ),
-                    "จำนวนวันที่ต้องใช้: {} วัน".format(
-                        format_quantity(item.get("required_days", 0))
-                    ),
-                    "จำนวนยาที่สั่ง: {} เม็ด".format(
-                        format_quantity(item.get("quantity", 0))
-                    ),
-                    "จำนวนยาที่ควรเป็น: {} เม็ด".format(
-                        format_quantity(item.get("expected_quantity", 0))
-                    ),
-                ]
-
+                # ถ้าไม่มีผลใน days_check_results ให้คำนวณจาก medicine โดยตรง
+                strength = str(medicine.get("strength", "") or "").strip() or "ไม่ได้ระบุ"
+                times = item.get("times_per_day", medicine.get("times_per_day", ""))
+                qty = item.get("quantity", medicine.get("quantity", 0))
+                item_required_days = item.get("required_days", required_days)
+                expected = item.get("expected_quantity", None)
                 missing = item.get("missing_quantity", 0) or 0
                 excess = item.get("excess_quantity", 0) or 0
+                status = item.get("status", "") or medicine.get("status", "") or "คำนวณไม่ได้"
 
-                if float(missing) > 0:
-                    fields.append(
-                        "*** ขาด {} เม็ด ***".format(format_quantity(missing))
-                    )
-                elif float(excess) > 0:
-                    fields.append(
-                        "*** เกิน {} เม็ด ***".format(format_quantity(excess))
-                    )
+                try:
+                    times_num = float(times or 0)
+                    req_num = float(item_required_days or 0)
+                    qty_num = float(qty or 0)
+                    if expected is None and times_num > 0 and req_num > 0:
+                        expected = req_num * times_num
+                    if expected is None:
+                        expected = 0
+                    if not missing and qty_num < float(expected):
+                        missing = float(expected) - qty_num
+                    if not excess and qty_num > float(expected):
+                        excess = qty_num - float(expected)
+                except Exception:
+                    expected = expected if expected is not None else 0
+
+                pdf.setFont(bold_font, 16)
+                pdf.setFillColorRGB(0, 0, 0)
+                pdf.drawString(60, y, "รายการยา {}: {}".format(index, name))
+                y -= 24
+
+                draw_line("ขนาดยา: {}".format(strength), 70)
+                draw_line("ครั้งต่อวัน: {} ครั้ง".format(fmt(times)), 70)
+                draw_line("จำนวนวันที่ต้องใช้: {} วัน".format(fmt(item_required_days)), 70)
+                draw_line("จำนวนยาที่สั่ง: {} เม็ด".format(fmt(qty, "0")), 70)
+                draw_line("จำนวนยาที่ควรเป็น: {} เม็ด".format(fmt(expected, "0")), 70)
+
+                if float(missing or 0) > 0:
+                    pdf.setFillColorRGB(1, 0, 0)
+                    draw_line("ขาด {} เม็ด".format(fmt(missing, "0")), 70, bold_font)
+                    pdf.setFillColorRGB(0, 0, 0)
+                elif float(excess or 0) > 0:
+                    pdf.setFillColorRGB(1, 0, 0)
+                    draw_line("เกิน {} เม็ด".format(fmt(excess, "0")), 70, bold_font)
+                    pdf.setFillColorRGB(0, 0, 0)
                 else:
-                    fields.append(
-                        "ผลการตรวจ: {}".format(
-                            item.get("status", "คำนวณไม่ได้")
-                        )
-                    )
+                    draw_line("ผลการตรวจ: {}".format(status), 70)
 
-                for field in fields:
-                    if "***" in field:
-                        draw_red_wrapped(field)
-                    else:
-                        y = page_space(y, 55)
-                        pdf.setFillColorRGB(0, 0, 0)
-                        y = draw_wrapped_text(
-                            pdf,
-                            field,
-                            70,
-                            y,
-                            70,
-                            normal_font,
-                            14,
-                            18
-                        )
+                y -= 8
 
-                y -= 10
-
-        # ========================================================
+        # --------------------------------------------------------
         # DRUG INTERACTION
-        # ========================================================
+        # --------------------------------------------------------
         if has_interaction:
             y -= 15
             y = page_space(y, 150)
-            pdf.setFillColorRGB(0, 0, 0)
             pdf.setFont(bold_font, 17)
-
             section_no = "2" if has_days_problem else "1"
             pdf.drawString(50, y, "{}. DRUG INTERACTION".format(section_no))
             y -= 28
 
-            for index, interaction in enumerate(interactions):
+            for index, interaction in enumerate(interactions, start=1):
                 y = page_space(y, 180)
-
                 drug1 = interaction.get("Drug_1", interaction.get("drug1", ""))
                 drug2 = interaction.get("Drug_2", interaction.get("drug2", ""))
                 risk = interaction.get("Risk", interaction.get("risk", ""))
                 severity = interaction.get("Severity", interaction.get("severity", ""))
-                summary = interaction.get(
-                    "Summary",
-                    interaction.get("summary", interaction.get("Description", ""))
-                )
-                management = interaction.get(
-                    "Management",
-                    interaction.get("management", "")
-                )
-                reference = interaction.get(
-                    "Reference",
-                    interaction.get("reference", "")
-                )
+                summary = interaction.get("Summary", interaction.get("summary", interaction.get("Description", "")))
+                management = interaction.get("Management", interaction.get("management", ""))
+                reference = interaction.get("Reference", interaction.get("reference", ""))
 
-                pdf.setFillColorRGB(0, 0, 0)
                 pdf.setFont(bold_font, 15)
-                pdf.drawString(
-                    60,
-                    y,
-                    "Interaction {}".format(index + 1)
-                )
+                pdf.setFillColorRGB(0, 0, 0)
+                pdf.drawString(60, y, "Interaction {}".format(index))
                 y -= 24
 
-                # แสดงชื่อยาที่ชนกันเป็นสีแดงพร้อมดอกจัน
-                draw_red_wrapped(
-                    "*** ยาที่มีปฏิกิริยาระหว่างกัน: {} ↔ {} ***".format(
-                        drug1, drug2
-                    )
-                )
-
-                # เน้นข้อความสำคัญเป็นสีแดง
+                pdf.setFillColorRGB(1, 0, 0)
+                draw_line("ยาที่มีปฏิกิริยาระหว่างกัน: {} ↔ {}".format(
+                    drug1 or "ไม่ได้ระบุ", drug2 or "ไม่ได้ระบุ"), 70, bold_font)
                 if risk:
-                    draw_red_wrapped("*** Risk: {} ***".format(risk))
-
+                    draw_line("Risk: {}".format(risk), 70, bold_font)
                 if severity:
-                    draw_red_wrapped("*** Severity: {} ***".format(severity))
-
+                    draw_line("Severity: {}".format(severity), 70, bold_font)
+                pdf.setFillColorRGB(0, 0, 0)
                 if summary:
-                    y = page_space(y, 55)
-                    pdf.setFillColorRGB(0, 0, 0)
-                    y = draw_wrapped_text(
-                        pdf,
-                        "Clinical Significance: {}".format(summary),
-                        70,
-                        y,
-                        70,
-                        normal_font,
-                        14,
-                        18
-                    )
-
+                    draw_line("Clinical Significance: {}".format(summary), 70)
                 if management:
-                    y = page_space(y, 55)
-                    pdf.setFillColorRGB(0, 0, 0)
-                    y = draw_wrapped_text(
-                        pdf,
-                        "Management: {}".format(management),
-                        70,
-                        y,
-                        70,
-                        normal_font,
-                        14,
-                        18
-                    )
-
+                    draw_line("Management: {}".format(management), 70)
                 if reference:
-                    y = page_space(y, 55)
-                    pdf.setFillColorRGB(0, 0, 0)
-                    y = draw_wrapped_text(
-                        pdf,
-                        "Reference: {}".format(reference),
-                        70,
-                        y,
-                        70,
-                        normal_font,
-                        14,
-                        18
-                    )
-
+                    draw_line("Reference: {}".format(reference), 70)
                 y -= 12
 
-        # ========================================================
+        # --------------------------------------------------------
         # DOCTOR OPINION
-        # ========================================================
+        # --------------------------------------------------------
         y -= 10
         y = page_space(y, 190)
-        pdf.setFillColorRGB(0, 0, 0)
         pdf.setFont(bold_font, 17)
-
         section_no = 3 if (has_days_problem and has_interaction) else 2
         pdf.drawString(50, y, "{}. ความเห็นแพทย์".format(section_no))
         y -= 30
-        pdf.setFont(normal_font, 14)
 
         opinion_lines = []
-
         if has_days_problem:
             opinion_lines.extend([
                 "☐ เพิ่มจำนวนยาให้ครบตามจำนวนที่ขาด",
                 "☐ ลดจำนวนยาในส่วนที่เกิน",
                 "☐ เห็นควรจ่ายตามจำนวนเดิม",
             ])
-
         if has_interaction:
             opinion_lines.extend([
                 "☐ เห็นควรจ่ายยาตามเดิม",
                 "☐ ปรับเปลี่ยน/หยุดยาที่มีปฏิกิริยาระหว่างกัน",
                 "☐ ติดตามอาการหรือผลตรวจทางห้องปฏิบัติการเพิ่มเติม",
             ])
-
-        opinion_lines.append(
-            "☐ อื่น ๆ: ________________________________________________"
-        )
+        opinion_lines.append("☐ อื่น ๆ: ________________________________________________")
 
         for text_line in opinion_lines:
-            y = page_space(y, 60)
-            pdf.setFillColorRGB(0, 0, 0)
-            y = draw_wrapped_text(
-                pdf,
-                text_line,
-                65,
-                y,
-                70,
-                normal_font,
-                14,
-                22
-            )
+            draw_line(text_line, 65)
 
         y -= 15
-        pdf.setFont(normal_font, 14)
-
         for text_line in [
             "แพทย์ผู้พิจารณา: ______________________________",
             "วันที่: _________________________________________",
             "หมายเหตุ: _____________________________________"
         ]:
             y = page_space(y, 50)
+            pdf.setFont(normal_font, 14)
             pdf.drawString(65, y, text_line)
             y -= 25
 
         pdf.setFillColorRGB(0, 0, 0)
         pdf.setFont(normal_font, 9)
-        pdf.drawCentredString(
-            width / 2,
-            25,
-            "ระบบ Medication Management / Clinical Decision Support"
-        )
-
+        pdf.drawCentredString(width / 2, 25,
+                              "ระบบ Medication Management / Clinical Decision Support")
         pdf.save()
 
-        if not os.path.exists(pdf_path):
-            return None
-
-        return filename
+        return filename if os.path.exists(pdf_path) else None
 
     except Exception as e:
         print("ERROR CREATE MEDICATION CONSULT PDF:", repr(e))
@@ -5125,9 +5132,17 @@ def ensure_days_consult_pdf(patient, queue_id=None):
     if not has_days_problem and not has_interaction:
         return patient
 
-    # ห้าม reuse PDF เก่า เพราะ patient_json ใน Queue อาจเก็บชื่อไฟล์เดิม
-    # ซึ่งสร้างก่อนรายการยา/Interaction ถูกแก้ไข
-    # ให้สร้าง Consult PDF ใหม่ทุกครั้งที่มีปัญหา
+    existing_filename = str(
+        patient.get("days_consult_pdf", "") or ""
+    ).strip()
+
+    # ถ้ามี Interaction ให้สร้าง Consult ใหม่เสมอ เพื่อไม่ใช้ PDF เก่าที่เคยขึ้น
+    # "ไม่พบ Drug Interaction" ก่อนแก้ระบบ
+    if existing_filename and os.path.exists(
+        os.path.join(CONSULT_FOLDER, existing_filename)
+    ) and not has_interaction:
+        return patient
+
     filename = create_days_supply_consult_pdf(patient)
 
     if filename:
@@ -5241,6 +5256,94 @@ def create_consult_pdf():
         )
 
 
+        # ====================================================
+        # USE REAL PATIENT DATA FROM QUEUE BY HN
+        # ====================================================
+        queue_medications = None
+        queue_interactions = None
+
+        # ปุ่มสร้าง PDF จากหน้าตรวจยาบางเวอร์ชันส่งมาเฉพาะ HN/ชื่อ
+        # แต่ไม่ได้ส่งข้อมูลอายุ วันที่ และรายการยาครบ
+        # จึงต้องดึง patient_json ของ HN นี้จาก Queue โดยตรง
+        # เพื่อป้องกัน PDF ที่มีแต่หัวข้อ/แพทเทิร์น
+        queue_patient = None
+        try:
+            hn_lookup = str(hn or "").strip()
+            if hn_lookup:
+                conn_lookup = get_db()
+                try:
+                    row_lookup = conn_lookup.execute(
+                        """
+                        SELECT id, hn, dispense_date, appointment_date, patient_json
+                        FROM prescription_queue
+                        WHERE hn = ?
+                        ORDER BY
+                            CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
+                            id DESC
+                        LIMIT 1
+                        """,
+                        (hn_lookup,)
+                    ).fetchone()
+                finally:
+                    conn_lookup.close()
+
+                if row_lookup is not None:
+                    try:
+                        queue_patient = json.loads(row_lookup["patient_json"] or "{}")
+                    except Exception:
+                        queue_patient = {}
+
+                    if row_lookup is not None:
+                        queue_patient["queue_id"] = row_lookup["id"]
+                        queue_patient["hn"] = str(row_lookup["hn"] or queue_patient.get("hn", hn_lookup)).strip()
+
+                        if row_lookup["dispense_date"]:
+                            queue_patient["dispense_date"] = str(row_lookup["dispense_date"]).strip()
+                        if row_lookup["appointment_date"]:
+                            queue_patient["appointment_date"] = str(row_lookup["appointment_date"]).strip()
+
+                        # คำนวณ Days Supply ใหม่จากข้อมูลของ HN นี้
+                        queue_patient = calculate_days_check(queue_patient)
+
+                        # ใช้ข้อมูลจริงของผู้ป่วยแทนค่าที่ form ส่งมา
+                        patient_name = str(queue_patient.get("name", "") or "").strip()
+                        age = str(queue_patient.get("age", "") or "").strip()
+                        dispense_date = str(queue_patient.get("dispense_date", "") or "").strip()
+                        appointment_date = str(queue_patient.get("appointment_date", "") or "").strip()
+
+                        # ใช้รายการยาจริงทั้งหมดจาก patient_json
+                        real_medicines = queue_patient.get("medicines", []) or []
+                        if real_medicines:
+                            medications_from_patient = []
+                            for med in real_medicines:
+                                medications_from_patient.append({
+                                    "name": str(med.get("name", "") or "ไม่ได้ระบุ"),
+                                    "strength": str(med.get("strength", "") or "ไม่ได้ระบุ"),
+                                    "frequency": "{} ครั้ง/วัน".format(med.get("times_per_day", "")) if med.get("times_per_day", "") not in (None, "") else "ไม่ได้ระบุ",
+                                    "route": str(med.get("route", "") or "ไม่ได้ระบุ"),
+                                    "start_date": str(med.get("start_date", "") or "ไม่ได้ระบุ"),
+                                    "quantity": med.get("quantity", "ไม่ได้ระบุ"),
+                                    "times_per_day": med.get("times_per_day", ""),
+                                    "required_days": med.get("required_days", queue_patient.get("required_days", "")),
+                                    "expected_quantity": med.get("expected_quantity", ""),
+                                    "missing_quantity": med.get("missing_quantity", 0),
+                                    "excess_quantity": med.get("excess_quantity", 0)
+                                })
+                            queue_medications = medications_from_patient
+
+                        # ใช้ Interaction จริงของ HN นี้
+                        interactions_from_patient = queue_patient.get("interaction_results", []) or []
+                        if not interactions_from_patient and len(real_medicines) >= 2:
+                            interactions_from_patient = check_drug_interactions([
+                                str(m.get("name", "") or "").strip()
+                                for m in real_medicines
+                                if str(m.get("name", "") or "").strip()
+                            ])
+                        queue_interactions = interactions_from_patient
+        except Exception as queue_error:
+            print("WARNING LOAD PATIENT FOR CONSULT PDF:", repr(queue_error))
+
+
         try:
 
             interaction_count = int(
@@ -5257,56 +5360,60 @@ def create_consult_pdf():
 
         interactions = []
 
+        # ถ้าเจอ HN ใน Queue ให้ใช้ Interaction จริงของ HN นั้น
+        # ไม่ใช้ค่าจาก form ที่อาจส่งมาไม่ครบหรือเป็นค่าว่าง
+        if queue_interactions is not None:
+            interactions = queue_interactions
+        else:
+            for i in range(
+                interaction_count
+            ):
 
-        for i in range(
-            interaction_count
-        ):
+                interactions.append({
 
-            interactions.append({
+                    "Drug_1":
+                        request.form.get(
+                            "drug1_{}".format(i),
+                            ""
+                        ),
 
-                "Drug_1":
-                    request.form.get(
-                        "drug1_{}".format(i),
-                        ""
-                    ),
+                    "Drug_2":
+                        request.form.get(
+                            "drug2_{}".format(i),
+                            ""
+                        ),
 
-                "Drug_2":
-                    request.form.get(
-                        "drug2_{}".format(i),
-                        ""
-                    ),
+                    "Risk":
+                        request.form.get(
+                            "risk_{}".format(i),
+                            ""
+                        ),
 
-                "Risk":
-                    request.form.get(
-                        "risk_{}".format(i),
-                        ""
-                    ),
+                    "Severity":
+                        request.form.get(
+                            "severity_{}".format(i),
+                            ""
+                        ),
 
-                "Severity":
-                    request.form.get(
-                        "severity_{}".format(i),
-                        ""
-                    ),
+                    "Summary":
+                        request.form.get(
+                            "summary_{}".format(i),
+                            ""
+                        ),
 
-                "Summary":
-                    request.form.get(
-                        "summary_{}".format(i),
-                        ""
-                    ),
+                    "Management":
+                        request.form.get(
+                            "management_{}".format(i),
+                            ""
+                        ),
 
-                "Management":
-                    request.form.get(
-                        "management_{}".format(i),
-                        ""
-                    ),
+                    "Reference":
+                        request.form.get(
+                            "reference_{}".format(i),
+                            ""
+                        )
 
-                "Reference":
-                    request.form.get(
-                        "reference_{}".format(i),
-                        ""
-                    )
-
-            })
+                })
 
 
         if not interactions:
@@ -5352,6 +5459,10 @@ def create_consult_pdf():
 
         medications = []
 
+        # ใช้รายการยาจริงจาก patient_json ของ HN นี้ก่อน
+        if queue_medications is not None:
+            medications = queue_medications
+
 
         try:
 
@@ -5367,49 +5478,31 @@ def create_consult_pdf():
             medication_count = 0
 
 
-        for i in range(
-            medication_count
-        ):
+        if queue_medications is None:
+            for i in range(
+                medication_count
+            ):
 
-            medications.append({
-
-                "name":
-                    request.form.get(
-                        "med_name_{}".format(i),
-                        "ไม่ได้ระบุ"
+                medications.append({
+                    "name": request.form.get(
+                        "med_name_{}".format(i), "ไม่ได้ระบุ"
                     ),
-
-                "strength":
-                    request.form.get(
-                        "med_strength_{}".format(i),
-                        "ไม่ได้ระบุ"
+                    "strength": request.form.get(
+                        "med_strength_{}".format(i), "ไม่ได้ระบุ"
                     ),
-
-                "frequency":
-                    request.form.get(
-                        "med_frequency_{}".format(i),
-                        "ไม่ได้ระบุ"
+                    "frequency": request.form.get(
+                        "med_frequency_{}".format(i), "ไม่ได้ระบุ"
                     ),
-
-                "route":
-                    request.form.get(
-                        "med_route_{}".format(i),
-                        "ไม่ได้ระบุ"
+                    "route": request.form.get(
+                        "med_route_{}".format(i), "ไม่ได้ระบุ"
                     ),
-
-                "start_date":
-                    request.form.get(
-                        "med_start_date_{}".format(i),
-                        "ไม่ได้ระบุ"
+                    "start_date": request.form.get(
+                        "med_start_date_{}".format(i), "ไม่ได้ระบุ"
                     ),
-
-                "quantity":
-                    request.form.get(
-                        "med_quantity_{}".format(i),
-                        "ไม่ได้ระบุ"
+                    "quantity": request.form.get(
+                        "med_quantity_{}".format(i), "ไม่ได้ระบุ"
                     )
-
-            })
+                })
 
 
         # ====================================================
@@ -5911,32 +6004,32 @@ def create_consult_pdf():
                     index + 1
                 ),
 
-                "Drug 1: {}".format(
+                "*** Drug 1: {} ***".format(
                     item.get(
                         "Drug_1",
                         ""
-                    )
+                    ) or "ไม่ได้ระบุ"
                 ),
 
-                "Drug 2: {}".format(
+                "*** Drug 2: {} ***".format(
                     item.get(
                         "Drug_2",
                         ""
-                    )
+                    ) or "ไม่ได้ระบุ"
                 ),
 
-                "Risk: {}".format(
+                "*** Risk: {} ***".format(
                     item.get(
                         "Risk",
                         "ไม่ได้ระบุ"
-                    )
+                    ) or "ไม่ได้ระบุ"
                 ),
 
-                "Severity: {}".format(
+                "*** Severity: {} ***".format(
                     item.get(
                         "Severity",
                         "ไม่ได้ระบุ"
-                    )
+                    ) or "ไม่ได้ระบุ"
                 ),
 
                 "Clinical Significance: {}".format(
@@ -5960,6 +6053,11 @@ def create_consult_pdf():
                 fields
             ):
 
+                if "***" in text:
+                    pdf.setFillColorRGB(1, 0, 0)
+                else:
+                    pdf.setFillColorRGB(0, 0, 0)
+
                 y = draw_wrapped_text(
                     pdf,
                     text,
@@ -5970,6 +6068,7 @@ def create_consult_pdf():
                     14,
                     18
                 )
+                pdf.setFillColorRGB(0, 0, 0)
 
 
             y -= 8
@@ -6192,16 +6291,11 @@ def create_consult_pdf():
 )
 def download_consult(filename):
 
-    response = send_from_directory(
+    return send_from_directory(
         CONSULT_FOLDER,
         filename,
         as_attachment=True
     )
-    # ป้องกัน browser/proxy cache ไฟล์ PDF เก่า
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    return response
 
 
 # ============================================================
@@ -6424,21 +6518,6 @@ def add_patient_to_queue(
 
 
         # ----------------------------------------------------
-        # คำนวณ Drug Interaction จากรายการยาปัจจุบันก่อนบันทึก Queue
-        # ห้ามใช้ interaction_results / PDF เก่าที่ติดมากับ patient_json
-        # ----------------------------------------------------
-        direct_drug_names = [
-            str(m.get("name", "") or "").strip()
-            for m in (patient.get("medicines", []) or [])
-            if str(m.get("name", "") or "").strip()
-            and str(m.get("name", "") or "").strip() != "ไม่ได้ระบุ"
-        ]
-        patient["interaction_results"] = (
-            check_drug_interactions(direct_drug_names)
-            if len(direct_drug_names) >= 2 else []
-        )
-
-        # ----------------------------------------------------
         # สร้าง Days Supply Consult ตั้งแต่ตอนเพิ่มเข้า Queue
         # เพื่อให้หน้าแสดงผลมีข้อมูลแจ้งเตือนและปุ่มดาวน์โหลดทันที
         # ----------------------------------------------------
@@ -6569,7 +6648,7 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
     <table>
       <thead><tr>
         <th>ลำดับ</th><th>ชื่อยา</th><th>ขนาดยา</th><th>ครั้ง/วัน</th>
-        <th>จำนวนที่ต้องจ่าย</th><th>จำนวนวันที่ใช้ได้</th>
+        <th>จำนวนที่สั่งจ่าย</th><th>จำนวนที่ต้องจ่ายจริง</th>
         <th>Stock ปัจจุบัน</th><th>สถานะ Stock</th><th>ผลตรวจ</th>
       </tr></thead>
       <tbody>
@@ -6580,7 +6659,7 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
         <td>{{ m.strength or '-' }}</td>
         <td>{{ m.times_per_day }}</td>
         <td>{{ m.quantity }}</td>
-        <td>{{ ('%.1f'|format((m.quantity|float / (m.times_per_day|float)) if (m.times_per_day|float)>0 else 0)) }} วัน</td>
+        <td class="{{ 'bad' if (m.quantity|float) < (m.expected_quantity|float) else 'ok' }}">{{ m.expected_quantity }}</td>
         <td><b>{{ m.stock_quantity|default(0) }}</b> {{ m.stock_unit or '' }}</td>
         <td class="{{ 'ok' if m.stock_found and m.stock_status == 'มีเพียงพอ' else 'bad' }}">
           {% if m.stock_found and m.stock_status == 'มีเพียงพอ' %}✓ มีเพียงพอ{% else %}✗ ไม่เพียงพอ{% endif %}
@@ -6683,21 +6762,24 @@ def _prepare_unified_result_patient(patient):
 
     if has_days_problem or has_interaction:
         try:
-            # ล้าง reference ของ PDF เก่าก่อนสร้างทุกครั้ง
-            # เพื่อไม่ให้หน้าเว็บ/Queue นำไฟล์ Consult เดิมกลับมาใช้ซ้ำ
-            old_pdf_filename = str(patient.get("days_consult_pdf", "") or "").strip()
-            patient["days_consult_pdf"] = ""
-
-            pdf_filename = create_days_supply_consult_pdf(patient)
-            # ลบไฟล์ Consult เก่าของ HN นี้หลังจากสร้างไฟล์ใหม่สำเร็จ
-            # เพื่อไม่ให้มีโอกาสเปิดไฟล์เก่าจากรายการเดิม
-            if pdf_filename and old_pdf_filename and old_pdf_filename != pdf_filename:
-                old_pdf_path = os.path.join(CONSULT_FOLDER, old_pdf_filename)
+            # ลืม/ไม่ใช้ PDF Consult เก่าทันทีที่เตรียมผลใหม่
+            # เพื่อบังคับให้สร้าง PDF จาก interaction_results ชุดล่าสุด
+            old_pdf = str(patient.get("days_consult_pdf", "") or "").strip()
+            if old_pdf:
+                old_path = os.path.join(CONSULT_FOLDER, old_pdf)
                 try:
-                    if os.path.exists(old_pdf_path):
-                        os.remove(old_pdf_path)
-                except Exception as cleanup_error:
-                    print("WARNING CLEAN OLD CONSULT PDF:", repr(cleanup_error))
+                    if os.path.isfile(old_path):
+                        os.remove(old_path)
+                        print("REMOVED OLD CONSULT PDF:", old_path)
+                except Exception as remove_error:
+                    print("WARNING REMOVE OLD CONSULT PDF:", repr(remove_error))
+
+            # เคลียร์ชื่อ PDF เดิมก่อนสร้างใบใหม่
+            patient["days_consult_pdf"] = ""
+            patient["days_consult_created_at"] = ""
+
+            # สร้าง PDF ใหม่ทุกครั้ง ไม่ใช้ไฟล์เก่าที่ค้างอยู่
+            pdf_filename = create_days_supply_consult_pdf(patient)
             if pdf_filename:
                 patient["days_consult_pdf"] = pdf_filename
                 patient["days_consult_created_at"] = datetime.now().strftime(
@@ -8087,6 +8169,5 @@ if __name__ == "__main__":
     print("=" * 60)
 
 
-    app.run(
-        debug=True
-    )
+    if __name__ == "__main__":
+        app.run(debug=True, use_reloader=False)
