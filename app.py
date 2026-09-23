@@ -159,6 +159,9 @@ PROLOG_DRUG_ATOMS = {
     "amlodipine": "amlodipine",
 }
 
+# Cache ผลตรวจ interaction กันเรียก swipl ซ้ำคู่ยาเดิม
+_interaction_cache = {}
+
 
 
 # ไฟล์ต้นฉบับใบสั่งยาที่ระบบเก็บไว้เพื่อ Sync แบบ Real-time
@@ -793,6 +796,11 @@ def _run_prolog_goal(goal, timeout=10):
 
 def _prolog_query_pair(atom_a, atom_b):
     """เรียก SWI-Prolog แยก process เพื่อไม่ให้ DLL ของ PySWIP ชนกับ Flask/openpyxl"""
+
+    cache_key = frozenset((atom_a, atom_b))
+    if cache_key in _interaction_cache:
+        return _interaction_cache[cache_key]
+
     goal = (
         "(check_interaction({}, {}, Risk, Severity, Warning) -> "
         "format('FOUND\\t~w\\t~w\\t~w', [Risk, Severity, Warning]) ; "
@@ -817,17 +825,21 @@ def _prolog_query_pair(atom_a, atom_b):
     print("stdout:", output)
 
     if output == "NONE" or not output:
+        _interaction_cache[cache_key] = None
         return None
 
     parts = output.split("\t", 3)
     if len(parts) != 4 or parts[0] != "FOUND":
+        _interaction_cache[cache_key] = None
         return None
 
-    return {
+    result = {
         "Risk": parts[1],
         "Severity": parts[2],
         "Warning": parts[3],
     }
+    _interaction_cache[cache_key] = result
+    return result
 
 
 def check_drug_interactions(drug_names):
@@ -853,7 +865,12 @@ def check_drug_interactions(drug_names):
                 continue
             seen_pairs.add(pair)
 
-            data = _prolog_query_pair(atom_a, atom_b)
+            try:
+                data = _prolog_query_pair(atom_a, atom_b)
+            except Exception as e:
+                print("WARNING: ข้าม interaction check คู่นี้เพราะ Prolog error:", repr(e))
+                data = None
+
             if data:
                 results.append({
                     "Drug_1": original_a,
