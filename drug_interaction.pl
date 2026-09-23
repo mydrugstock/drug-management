@@ -60,6 +60,8 @@ check_interaction(DrugA, DrugB, Risk, Severity, Warning) :-
 lab_range(egfr, 90, 999, 'ml/min/1.73m2').
 lab_range(potassium, 3.5, 5.0, 'mEq/L').
 lab_range(alt, 0, 40, 'U/L').
+lab_range(sbp, 90, 129, 'mmHg').
+lab_range(dbp, 60, 89, 'mmHg').
 
 % lab_status(LabKey, Value, Status, Description)
 % Status ที่เป็นไปได้: normal / low / high
@@ -98,6 +100,30 @@ lab_status(alt, Value, high, 'ALT สูงเล็กน้อย (1-3 เท�
     number(Value), Value > 40, Value =< 120, !.
 lab_status(alt, Value, normal, 'ALT ปกติ') :-
     number(Value), Value >= 0, Value =< 40, !.
+
+% ==== Systolic Blood Pressure (SBP) ====
+% อ้างอิงเกณฑ์ทั่วไปแบบ ACC/AHA — ต้องให้แพทย์/เภสัชกรตรวจทาน cutoff
+% ก่อนใช้งานจริง เพราะบาง รพ. อาจใช้เกณฑ์ JNC7/ESC ที่ค่าต่างออกไป
+lab_status(sbp, Value, high, 'ความดันช่วงบนสูง (Hypertension stage 2 ขึ้นไป)') :-
+    number(Value), Value >= 160, !.
+lab_status(sbp, Value, high, 'ความดันช่วงบนสูง (Hypertension stage 1)') :-
+    number(Value), Value >= 140, Value < 160, !.
+lab_status(sbp, Value, high, 'ความดันช่วงบนสูงกว่าปกติเล็กน้อย (Elevated)') :-
+    number(Value), Value >= 130, Value < 140, !.
+lab_status(sbp, Value, normal, 'ความดันช่วงบนปกติ') :-
+    number(Value), Value >= 90, Value < 130, !.
+lab_status(sbp, Value, low, 'ความดันช่วงบนต่ำ (Hypotension)') :-
+    number(Value), Value < 90, !.
+
+% ==== Diastolic Blood Pressure (DBP) ====
+lab_status(dbp, Value, high, 'ความดันช่วงล่างสูง (Hypertension stage 2 ขึ้นไป)') :-
+    number(Value), Value >= 100, !.
+lab_status(dbp, Value, high, 'ความดันช่วงล่างสูง (Hypertension stage 1)') :-
+    number(Value), Value >= 90, Value < 100, !.
+lab_status(dbp, Value, normal, 'ความดันช่วงล่างปกติ') :-
+    number(Value), Value >= 60, Value < 90, !.
+lab_status(dbp, Value, low, 'ความดันช่วงล่างต่ำ (Hypotension)') :-
+    number(Value), Value < 60, !.
 
 
 % ==========================================================
