@@ -632,181 +632,265 @@ def check_drug_interactions(drug_names):
 
 
 # ============================================================
-# LAB-BASED DOSE ADJUSTMENT (eGFR / K+ / ALT) - rule-based
-#
-# ⚠️ Threshold/คำแนะนำอ้างอิงหลักการทั่วไปเพื่อความปลอดภัยเบื้องต้น
-# เท่านั้น ไม่ใช่คำวินิจฉัย/สั่งการรักษาจริง ทีมเภสัชกร/แพทย์ที่ปรึกษา
-# โปรเจกต์ต้องตรวจทาน threshold ทั้งหมดก่อนใช้งานกับผู้ป่วยจริงเสมอ
-# ระบบทำหน้าที่ "แจ้งเตือน" ไม่ใช่ "สั่งเปลี่ยนยาอัตโนมัติ"
+# LAB-BASED DOSE ADJUSTMENT (eGFR / K+ / ALT)
+# ตัดสินใจ (threshold / high-low) ทั้งหมดอยู่ใน drug_interaction.pl
+# Python มีหน้าที่แค่ดึงค่าจาก patient, ส่งไปถาม Prolog, และจัดรูปแบบผลลัพธ์
 # ============================================================
 
-LAB_DOSE_RULES = {
-
-    "egfr": {
-        "label": "eGFR",
-        "unit": "ml/min/1.73m2",
-        "rules": {
-            "glipizide": [
-                (0, 30, "Glipizide ไม่ถูกขับผ่านไตเป็นหลักและไม่มี active "
-                        "metabolite จึงค่อนข้างปลอดภัยกว่าซัลโฟนิลยูเรียตัวอื่น "
-                        "ในผู้ป่วยไตเสื่อมรุนแรง แต่ยังควรเริ่มขนาดต่ำและติดตาม "
-                        "ภาวะน้ำตาลต่ำใกล้ชิด (eGFR < 30)"),
-            ],
-            "insulin_nph": [
-                (0, 30, "ความต้องการอินซูลินมักลดลงเมื่อไตเสื่อม ควรพิจารณาลด"
-                        "ขนาดและติดตามน้ำตาลถี่ขึ้น (eGFR < 30) — ปรับขนาดตาม"
-                        "การตอบสนอง ไม่ใช่เปลี่ยนยา"),
-            ],
-            "spironolactone": [
-                (0, 30, "ห้ามใช้ (contraindicated) เสี่ยง hyperkalemia รุนแรง "
-                        "(eGFR < 30 ตาม product labeling)"),
-                (30, 50, "ใช้ด้วยความระมัดระวังสูง ติดตามค่า K+ ใกล้ชิด "
-                         "(eGFR 30-49)"),
-            ],
-            "amiloride_hydrochlorothiazide": [
-                (0, 30, "ยากลุ่ม potassium-sparing diuretic ร่วมกับ thiazide "
-                        "ความเสี่ยง hyperkalemia สูงขึ้นมากเมื่อไตเสื่อม "
-                        "ควรเลี่ยง (eGFR < 30)"),
-            ],
-            "enalapril": [
-                (0, 30, "โดยทั่วไปแนะนำ 'คงการใช้ยาต่อพร้อมติดตามใกล้ชิด' "
-                        "มากกว่าเปลี่ยนยา — เริ่มขนาดต่ำ ติดตาม K+/Creatinine "
-                        "หลังเริ่ม/ปรับยา 2-3 สัปดาห์ (eGFR < 30)"),
-            ],
-            "captopril": [
-                (0, 30, "โดยทั่วไปแนะนำ 'คงการใช้ยาต่อพร้อมติดตามใกล้ชิด' "
-                        "มากกว่าเปลี่ยนยา — เริ่มขนาดต่ำ ติดตาม K+/Creatinine "
-                        "หลังเริ่ม/ปรับยา 2-3 สัปดาห์ (eGFR < 30)"),
-            ],
-            "losartan": [
-                (0, 30, "โดยทั่วไปแนะนำ 'คงการใช้ยาต่อพร้อมติดตามใกล้ชิด' "
-                        "มากกว่าเปลี่ยนยา — เริ่มขนาดต่ำ ติดตาม K+/Creatinine "
-                        "หลังเริ่ม/ปรับยา 2-3 สัปดาห์ (eGFR < 30)"),
-            ],
-        },
-        "alternatives": {},
-    },
-
-    "potassium": {
-        "label": "K+",
-        "unit": "mEq/L",
-        "rules": {
-            "spironolactone": [
-                (5.5, 999, "K+ สูง (>5.5) ร่วมกับยากลุ่ม potassium-sparing "
-                           "diuretic — เสี่ยง hyperkalemia รุนแรง ควรพิจารณา"
-                           "หยุดยาและติดตาม K+ ซ้ำ ก่อนตัดสินใจให้ยาต่อ"),
-            ],
-            "amiloride_hydrochlorothiazide": [
-                (5.5, 999, "K+ สูง (>5.5) ร่วมกับยากลุ่ม potassium-sparing "
-                           "diuretic — เสี่ยง hyperkalemia รุนแรง ควรพิจารณา"
-                           "หยุดยาและติดตาม K+ ซ้ำ ก่อนตัดสินใจให้ยาต่อ"),
-            ],
-            "enalapril": [
-                (5.5, 6.0, "K+ สูงระดับปานกลาง (5.5-6.0) ร่วมกับ ACEi — "
-                           "ควรติดตาม K+ ใกล้ชิด พิจารณาลดขนาดหรือหยุดยา"
-                           "ตามดุลยพินิจแพทย์"),
-                (6.0, 999, "K+ สูงรุนแรง (>6.0) ร่วมกับ ACEi — เสี่ยง cardiac "
-                           "arrhythmia ควรพิจารณาหยุดยาและส่งตรวจ EKG/แก้ไข "
-                           "K+ เร่งด่วนตามดุลยพินิจแพทย์"),
-            ],
-            "captopril": [
-                (5.5, 6.0, "K+ สูงระดับปานกลาง (5.5-6.0) ร่วมกับ ACEi — "
-                           "ควรติดตาม K+ ใกล้ชิด พิจารณาลดขนาดหรือหยุดยา"
-                           "ตามดุลยพินิจแพทย์"),
-                (6.0, 999, "K+ สูงรุนแรง (>6.0) ร่วมกับ ACEi — เสี่ยง cardiac "
-                           "arrhythmia ควรพิจารณาหยุดยาและส่งตรวจ EKG/แก้ไข "
-                           "K+ เร่งด่วนตามดุลยพินิจแพทย์"),
-            ],
-            "losartan": [
-                (5.5, 6.0, "K+ สูงระดับปานกลาง (5.5-6.0) ร่วมกับ ARB — "
-                           "ควรติดตาม K+ ใกล้ชิด พิจารณาลดขนาดหรือหยุดยา"
-                           "ตามดุลยพินิจแพทย์"),
-                (6.0, 999, "K+ สูงรุนแรง (>6.0) ร่วมกับ ARB — เสี่ยง cardiac "
-                           "arrhythmia ควรพิจารณาหยุดยาและส่งตรวจ EKG/แก้ไข "
-                           "K+ เร่งด่วนตามดุลยพินิจแพทย์"),
-            ],
-        },
-        "alternatives": {},
-    },
-
-    "alt": {
-        "label": "ALT",
-        "unit": "U/L",
-        "rules": {
-            "simvastatin": [
-                (120, 999, "ALT สูงเกิน ~3 เท่าของค่าปกติทั่วไป (สมมติ ULN "
-                           "~40 U/L) ร่วมกับการใช้ statin — ตาม product "
-                           "labeling ทั่วไปแนะนำพิจารณาหยุดหรือลดขนาดยา "
-                           "และตรวจ LFT ซ้ำก่อนตัดสินใจ ไม่ควรฟันธงเปลี่ยนยา"
-                           "โดยไม่มีแพทย์พิจารณา"),
-            ],
-            "pioglitazone": [
-                (120, 999, "ALT สูงเกิน ~3 เท่าของค่าปกติทั่วไป — Pioglitazone "
-                           "มีคำเตือนเรื่อง hepatotoxicity ตาม labeling "
-                           "ควรหลีกเลี่ยงจนกว่า LFT จะกลับสู่ระดับที่ยอมรับได้ "
-                           "และให้แพทย์ประเมินสาเหตุ liver enzyme สูงก่อน"),
-            ],
-        },
-        "alternatives": {},
-    },
+LAB_META = {
+    "egfr": {"field": "egfr", "label": "eGFR", "unit": "ml/min/1.73m2"},
+    "potassium": {"field": "potassium", "label": "K+", "unit": "mEq/L"},
+    "alt": {"field": "alt", "label": "ALT", "unit": "U/L"},
 }
+
+LAB_STATUS_TH = {
+    "high": "สูง",
+    "low": "ต่ำ",
+    "normal": "ปกติ",
+}
+
+
+def _format_prolog_number(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number.is_integer():
+        return str(int(number))
+    return repr(number)
+
+
+def _resolve_swipl_path():
+    swipl = shutil.which("swipl")
+
+    if swipl:
+        return swipl
+
+    possible_paths = [
+        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "swipl", "bin", "swipl.exe"),
+        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "SWI-Prolog", "bin", "swipl.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "swipl", "bin", "swipl.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "SWI-Prolog", "bin", "swipl.exe"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "swipl", "bin", "swipl.exe"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "SWI-Prolog", "bin", "swipl.exe"),
+    ]
+
+    for candidate in possible_paths:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+
+    return None
+
+
+def _prolog_query_lab(lab_items, drug_atoms):
+    """
+    lab_items: list of (lab_key, value) เช่น [("egfr", 25), ("potassium", 5.8)]
+    drug_atoms: list of Prolog drug atom (unique) เช่น ["losartan", "enalapril"]
+
+    ส่งไปถาม drug_interaction.pl (lab_status/4 และ check_lab_adjustment/5)
+    Python ไม่ตัดสินใจ threshold เอง แค่จัดรูปแบบผลลัพธ์ที่ได้กลับมา
+
+    คืนค่า (status_results, adjustment_results):
+      status_results:     [{"Lab":.., "Value":.., "Status":.., "Description":..}, ...]
+      adjustment_results: [{"Drug":.., "Lab":.., "Value":.., "Severity":.., "Recommendation":..}, ...]
+    """
+    if not lab_items:
+        return [], []
+
+    if not os.path.exists(PROLOG_FILE):
+        raise FileNotFoundError(
+            "ไม่พบไฟล์ drug_interaction.pl ที่: {}".format(PROLOG_FILE)
+        )
+
+    swipl = _resolve_swipl_path()
+
+    if not swipl:
+        raise RuntimeError(
+            "ไม่พบ swipl.exe ของ SWI-Prolog กรุณาติดตั้ง SWI-Prolog หรือแจ้งตำแหน่งที่ติดตั้ง"
+        )
+
+    lab_pairs = []
+    for lab_key, value in lab_items:
+        formatted = _format_prolog_number(value)
+        if formatted is None:
+            continue
+        lab_pairs.append("{}-{}".format(lab_key, formatted))
+
+    if not lab_pairs:
+        return [], []
+
+    labs_literal = "[" + ",".join(lab_pairs) + "]"
+    drugs_literal = "[" + ",".join(drug_atoms) + "]" if drug_atoms else "[]"
+
+    goal = (
+        "forall(member(Lab-Value, {labs}), "
+        "(lab_status(Lab, Value, Status, Desc) -> "
+        "format('STATUS\\t~w\\t~w\\t~w\\t~w\\n', [Lab, Value, Status, Desc]) ; true)), "
+        "forall((member(Drug, {drugs}), member(Lab2-Value2, {labs}), "
+        "check_lab_adjustment(Drug, Lab2, Value2, Severity, Recommendation)), "
+        "format('ADJUST\\t~w\\t~w\\t~w\\t~w\\t~w\\n', "
+        "[Drug, Lab2, Value2, Severity, Recommendation])), "
+        "halt(0)"
+    ).format(labs=labs_literal, drugs=drugs_literal)
+
+    print("=== SEND TO PROLOG (LAB) ===")
+    print("Labs:", labs_literal)
+    print("Drugs:", drugs_literal)
+    print("Goal:", goal)
+
+    proc = subprocess.run(
+        [swipl, "-q", "-f", "none", "-s", PROLOG_FILE, "-g", goal],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+        cwd=BASE_DIR,
+    )
+
+    print("=== PROLOG LAB RESULT ===")
+    print("Return code:", proc.returncode)
+    print("stdout:", proc.stdout.strip())
+    print("stderr:", proc.stderr.strip())
+
+    if proc.returncode != 0:
+        err = proc.stderr.strip() or proc.stdout.strip() or "(ไม่มีข้อความจาก SWI-Prolog)"
+        raise RuntimeError("SWI-Prolog error while checking lab values: {}".format(err))
+
+    status_results = []
+    adjustment_results = []
+
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        parts = line.split("\t")
+
+        if parts[0] == "STATUS" and len(parts) == 5:
+            _, lab, value, status, desc = parts
+            status_results.append({
+                "Lab": lab,
+                "Value": value,
+                "Status": status,
+                "Description": desc,
+            })
+
+        elif parts[0] == "ADJUST" and len(parts) == 6:
+            _, drug, lab, value, severity, recommendation = parts
+            adjustment_results.append({
+                "Drug": drug,
+                "Lab": lab,
+                "Value": value,
+                "Severity": severity,
+                "Recommendation": recommendation,
+            })
+
+    return status_results, adjustment_results
+
+
+def _collect_patient_lab_items(patient):
+    lab_items = []
+    for lab_key, meta in LAB_META.items():
+        raw_value = patient.get(meta["field"])
+        if raw_value is None:
+            continue
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            continue
+        lab_items.append((lab_key, value))
+    return lab_items
+
+
+def check_lab_status(patient):
+    """
+    คืนรายการค่า lab ของผู้ป่วยทุกตัวที่มีข้อมูลในไฟล์ใบสั่งยา พร้อมสถานะ
+    "สูง / ต่ำ / ปกติ" — คำตัดสินทั้งหมดมาจาก lab_status/4 ใน
+    drug_interaction.pl (Python แค่ดึงค่าจาก patient แล้วจัดรูปแบบผลลัพธ์)
+    """
+    lab_items = _collect_patient_lab_items(patient)
+
+    if not lab_items:
+        return []
+
+    status_results, _ = _prolog_query_lab(lab_items, [])
+
+    results = []
+    for item in status_results:
+        lab_key = item["Lab"]
+        meta = LAB_META.get(lab_key, {"label": lab_key, "unit": ""})
+
+        try:
+            value_display = format_quantity(float(item["Value"]))
+        except Exception:
+            value_display = item["Value"]
+
+        results.append({
+            "Lab": meta["label"],
+            "Value": value_display,
+            "Unit": meta["unit"],
+            "Status": item["Status"],
+            "Status_TH": LAB_STATUS_TH.get(item["Status"], item["Status"]),
+            "Description": item["Description"],
+        })
+
+    return results
 
 
 def check_lab_based_adjustments(patient):
     """
     ตรวจยาที่ต้องปรับขนาด/หลีกเลี่ยง ตามค่า lab หลายตัว (eGFR, K+, ALT)
-    ฟิลด์ไหนไม่มีค่าใน patient จะข้าม lab นั้นไปเฉยๆ ไม่ฟันธงโดยไม่มีข้อมูล
+    Threshold และคำแนะนำทั้งหมดตัดสินใจโดย drug_interaction.pl
+    (check_lab_adjustment/5) — ฟิลด์ไหนไม่มีค่าใน patient จะข้ามไปเฉยๆ
+    ไม่ฟันธงโดยไม่มีข้อมูล
     """
-    lab_value_fields = {
-        "egfr": "egfr",
-        "potassium": "potassium",
-        "alt": "alt",
-    }
+    lab_items = _collect_patient_lab_items(patient)
+
+    if not lab_items:
+        return []
 
     medicines = patient.get("medicines", []) or []
-    results = []
+    atom_to_name = {}
 
-    for lab_key, config in LAB_DOSE_RULES.items():
-        field_name = lab_value_fields.get(lab_key, lab_key)
-        raw_value = patient.get(field_name)
+    for medicine in medicines:
+        drug_name = str(medicine.get("name", "") or "").strip()
+        if not drug_name:
+            continue
+        atom = resolve_prolog_drug(drug_name)
+        if atom and atom not in atom_to_name:
+            atom_to_name[atom] = drug_name
+
+    if not atom_to_name:
+        return []
+
+    _, adjustment_results = _prolog_query_lab(lab_items, list(atom_to_name.keys()))
+
+    results = []
+    for item in adjustment_results:
+        lab_key = item["Lab"]
+        meta = LAB_META.get(lab_key, {"label": lab_key, "unit": ""})
+        drug_name = atom_to_name.get(item["Drug"], item["Drug"])
 
         try:
-            value = float(raw_value)
-        except (TypeError, ValueError):
-            continue
+            value_display = format_quantity(float(item["Value"]))
+        except Exception:
+            value_display = item["Value"]
 
-        rules = config["rules"]
-        label = config["label"]
-        unit = config["unit"]
-        alternatives_map = config.get("alternatives", {})
-
-        for medicine in medicines:
-            drug_name = str(medicine.get("name", "") or "").strip()
-            if not drug_name:
-                continue
-
-            atom = resolve_prolog_drug(drug_name)
-            if not atom or atom not in rules:
-                continue
-
-            for min_value, max_value, action in rules[atom]:
-                if min_value <= value <= max_value:
-                    alternatives = alternatives_map.get(atom, [])
-                    results.append({
-                        "Drug": drug_name,
-                        "Lab": label,
-                        "Value": value,
-                        "Unit": unit,
-                        "Recommendation": action,
-                        "Alternatives": alternatives,
-                        "Alternatives_Note": (
-                            ""
-                            if alternatives
-                            else "ระบบยังไม่มีข้อมูลยาทดแทนที่ตรวจสอบแล้ว"
-                                 "สำหรับกรณีนี้ กรุณาให้แพทย์พิจารณา"
-                        ),
-                    })
-                    break
+        results.append({
+            "Drug": drug_name,
+            "Lab": meta["label"],
+            "Value": value_display,
+            "Unit": meta["unit"],
+            "Severity": item["Severity"],
+            "Recommendation": item["Recommendation"],
+            "Alternatives": [],
+            "Alternatives_Note": (
+                "ระบบยังไม่มีข้อมูลยาทดแทนที่ตรวจสอบแล้วสำหรับกรณีนี้ "
+                "กรุณาให้แพทย์พิจารณา"
+            ),
+        })
 
     return results
 
@@ -2906,6 +2990,47 @@ def create_consult_pdf():
                         dispense_date = str(queue_patient.get("dispense_date", "") or "").strip()
                         appointment_date = str(queue_patient.get("appointment_date", "") or "").strip()
 
+                        # --- FIX: ดึงข้อมูลคลินิกจริงจาก patient แทนการปล่อยให้เป็น
+                        # placeholder "ไม่ได้ระบุในข้อมูลใบสั่งยา" เสมอ (บั๊กเดิม: ฟิลด์
+                        # ward/diagnosis/weight/height/lab/renal/hepatic ไม่เคยถูกส่งมา
+                        # จากฟอร์ม จึงทำให้ PDF โชว์แต่ pattern ไม่มีข้อมูลจริง) ---
+                        if diagnosis in (None, "", "ไม่ได้ระบุในข้อมูลใบสั่งยา"):
+                            diagnosis_codes = queue_patient.get("diagnosis_icd10") or []
+                            if diagnosis_codes:
+                                diagnosis = ", ".join(
+                                    "{} ({})".format(
+                                        code, ICD10_LABELS.get(str(code).strip().lower(), "")
+                                    ).strip(" ()")
+                                    for code in diagnosis_codes
+                                )
+
+                        if renal_function in (None, "", "ไม่ได้ระบุในข้อมูลใบสั่งยา"):
+                            egfr_value = queue_patient.get("egfr")
+                            if egfr_value is not None:
+                                renal_function = "eGFR = {} ml/min/1.73m2".format(format_quantity(egfr_value))
+
+                        if hepatic_function in (None, "", "ไม่ได้ระบุในข้อมูลใบสั่งยา"):
+                            alt_value = queue_patient.get("alt")
+                            if alt_value is not None:
+                                hepatic_function = "ALT = {} U/L".format(format_quantity(alt_value))
+
+                        if lab in (None, "", "ไม่ได้ระบุในข้อมูลใบสั่งยา"):
+                            lab_parts = []
+                            if queue_patient.get("potassium") is not None:
+                                lab_parts.append("K+ = {} mEq/L".format(format_quantity(queue_patient.get("potassium"))))
+                            if queue_patient.get("egfr") is not None:
+                                lab_parts.append("eGFR = {} ml/min/1.73m2".format(format_quantity(queue_patient.get("egfr"))))
+                            if queue_patient.get("alt") is not None:
+                                lab_parts.append("ALT = {} U/L".format(format_quantity(queue_patient.get("alt"))))
+                            if queue_patient.get("bp_sbp") is not None and queue_patient.get("bp_dbp") is not None:
+                                lab_parts.append("BP = {}/{} mmHg".format(
+                                    format_quantity(queue_patient.get("bp_sbp")),
+                                    format_quantity(queue_patient.get("bp_dbp")),
+                                ))
+                            if lab_parts:
+                                lab = ", ".join(lab_parts)
+                        # --- END FIX ---
+
                         real_medicines = queue_patient.get("medicines", []) or []
                         if real_medicines:
                             medications_from_patient = []
@@ -3476,11 +3601,27 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
   </div>
 
   <div class="section">
+    <h3>🧪 ผลแลป — สูง / ต่ำ / ปกติ</h3>
+    {% if patient.lab_status_results %}
+      {% for x in patient.lab_status_results %}
+      <div class="summary {{ 'bad' if x.Status != 'normal' else 'ok' }}">
+        {% if x.Status == 'high' %}🔺{% elif x.Status == 'low' %}🔻{% else %}✅{% endif %}
+        <b>{{ x.Lab }}</b> = {{ x.Value }} {{ x.Unit }} —
+        <span class="{{ 'bad' if x.Status != 'normal' else 'ok' }}">{{ x.Status_TH }}</span>
+        ({{ x.Description }})
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="summary">ไม่มีข้อมูลผลแลป (eGFR / K+ / ALT) ในไฟล์ใบสั่งยา</div>
+    {% endif %}
+  </div>
+
+  <div class="section">
     <h3>🧪 Lab-based Dose Adjustment (eGFR / K+ / ALT)</h3>
     {% if patient.lab_adjustment_results %}
       {% for x in patient.lab_adjustment_results %}
       <div class="interaction bad">
-        ❌ <b>{{ x.Drug }}</b> ({{ x.Lab }} = {{ x.Value }} {{ x.Unit }}) — {{ x.Recommendation }}
+        ❌ <b>{{ x.Drug }}</b> ({{ x.Lab }} = {{ x.Value }} {{ x.Unit }}) [{{ x.Severity }}] — {{ x.Recommendation }}
         {% if x.Alternatives %}<br>ยาทางเลือก: {{ x.Alternatives|join(', ') }}
         {% elif x.Alternatives_Note %}<br><i>{{ x.Alternatives_Note }}</i>{% endif %}
       </div>
@@ -3551,6 +3692,7 @@ def _prepare_unified_result_patient(patient):
     patient["stock_sufficient"] = patient_stock_is_sufficient(patient)
 
     patient["indication_results"] = check_drug_indications(patient)
+    patient["lab_status_results"] = check_lab_status(patient)
     patient["lab_adjustment_results"] = check_lab_based_adjustments(patient)
     patient["bp_flag_results"] = check_bp_flags(patient)
     patient["allergy_results"] = check_drug_allergy(patient)
