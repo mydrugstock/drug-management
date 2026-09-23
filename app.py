@@ -8197,63 +8197,18 @@ def interactions():
 
 
 # ============================================================
-# INTERACTION CHECK
+# INTERACTION CHECK + LAB RESULT CHECK (หน้าเดียวกัน)
 # ============================================================
+# ตรวจจำนวนยา / ยาชนกัน (drug interaction) และอ่านผลแลป (สูง/ต่ำ/ปกติ)
+# พร้อมคำแนะนำปรับยาตามผลแลป รวมอยู่ในหน้าเดียว ใช้รายชื่อยาชุดเดียวกัน
 
-@app.route(
-    "/interaction-check",
-    methods=["GET", "POST"]
-)
-def interaction_check():
-
-    results = []
-
-    drug1 = ""
-
-    drug2 = ""
-
-
-    if request.method == "POST":
-
-        drug1 = request.form.get(
-            "drug1",
-            ""
-        )
-
-
-        drug2 = request.form.get(
-            "drug2",
-            ""
-        )
-
-
-        results = check_drug_interactions(
-            [
-                drug1,
-                drug2
-            ]
-        )
-
-
-    return render_template(
-        "interaction_check.html",
-        results=results,
-        drug1=drug1,
-        drug2=drug2
-    )
-
-
-# ============================================================
-# LAB RESULT CHECK (อ่านผลแลป สูง/ต่ำ/ปกติ ผ่าน Prolog)
-# ============================================================
-
-LAB_CHECK_TEMPLATE = """
+INTERACTION_LAB_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>อ่านผลแลป | ระบบจัดการยา</title>
+<title>ตรวจยาชนกัน + อ่านผลแลป | ระบบจัดการยา</title>
 <style>
   :root{
     --bg-1:#0f172a; --bg-2:#1e293b;
@@ -8270,7 +8225,7 @@ LAB_CHECK_TEMPLATE = """
     background:linear-gradient(135deg,var(--bg-1),var(--bg-2) 60%,#312e81);
     min-height:100vh; padding:32px 16px; color:var(--text);
   }
-  .wrap{max-width:920px;margin:0 auto;}
+  .wrap{max-width:960px;margin:0 auto;}
   .top{color:#e2e8f0;margin-bottom:24px;}
   .top a{color:#c7d2fe;text-decoration:none;font-size:14px;}
   h1{color:#fff;font-size:28px;margin:8px 0 4px;}
@@ -8283,11 +8238,12 @@ LAB_CHECK_TEMPLATE = """
   @keyframes fadeUp{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
   .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;}
   label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin-bottom:6px;}
-  input[type=text],input[type=number]{
+  textarea,input[type=text],input[type=number]{
     width:100%;padding:12px 14px;border:1.5px solid #e2e8f0;border-radius:10px;
-    font-size:15px;transition:border-color .15s,box-shadow .15s;
+    font-size:15px;font-family:inherit;transition:border-color .15s,box-shadow .15s;
   }
-  input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,70,229,.15);}
+  textarea{min-height:64px;resize:vertical;}
+  input:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,70,229,.15);}
   .unit{font-size:12px;color:var(--muted);margin-top:4px;}
   .btn{
     margin-top:20px; background:linear-gradient(135deg,var(--accent),var(--accent2));
@@ -8295,15 +8251,34 @@ LAB_CHECK_TEMPLATE = """
     cursor:pointer;transition:transform .15s,box-shadow .15s;
   }
   .btn:hover{transform:translateY(-2px);box-shadow:0 10px 20px -8px rgba(79,70,229,.6);}
+  .section-title{font-size:14px;font-weight:700;color:var(--muted);margin:0 0 12px;text-transform:uppercase;letter-spacing:.5px;}
+  .pill-count{
+    display:inline-block;background:#eef2ff;color:var(--accent);font-size:12px;font-weight:700;
+    padding:2px 10px;border-radius:999px;margin-left:8px;
+  }
+
+  /* --- Drug interaction results --- */
+  .int-card{
+    border-radius:14px;padding:16px 18px;margin-bottom:12px;border:1px solid #fecaca;
+    background:#fef2f2;animation:fadeUp .45s ease both;
+  }
+  .int-card.risk-d,.int-card.risk-c,.int-card.risk-dose_limit{border-color:#fde68a;background:#fffbeb;}
+  .int-pair{font-weight:700;font-size:15px;margin-bottom:4px;}
+  .int-tags{display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;}
+  .tag{font-size:11px;font-weight:700;text-transform:uppercase;padding:2px 8px;border-radius:6px;
+    background:#fff;border:1px solid currentColor;}
+  .tag.risk-x,.tag.risk-danger{color:var(--high);}
+  .tag.risk-d,.tag.risk-c,.tag.risk-dose_limit{color:var(--low);}
+  .int-text{font-size:14px;color:#334155;line-height:1.5;}
+
+  /* --- Lab results --- */
   .lab-result{
     border-radius:16px;padding:18px 20px;margin-bottom:14px;border:1px solid var(--card-border);
     display:flex;flex-direction:column;gap:8px;animation:fadeUp .45s ease both;
   }
   .lab-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;}
   .lab-name{font-weight:700;font-size:16px;}
-  .badge{
-    padding:5px 14px;border-radius:999px;font-size:13px;font-weight:700;letter-spacing:.2px;
-  }
+  .badge{padding:5px 14px;border-radius:999px;font-size:13px;font-weight:700;letter-spacing:.2px;}
   .badge.normal{background:var(--normal-bg);color:var(--normal);}
   .badge.high{background:var(--high-bg);color:var(--high);}
   .badge.low{background:var(--low-bg);color:var(--low);}
@@ -8315,35 +8290,40 @@ LAB_CHECK_TEMPLATE = """
   .range-fill.high{background:var(--high);}
   .range-fill.low{background:var(--low);}
   .range-labels{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px;}
+
+  /* --- Lab-based drug adjustment --- */
   .adj-card{
     border-radius:14px;padding:16px 18px;margin-bottom:12px;border:1px solid #fecaca;
     background:#fff7f5;animation:fadeUp .45s ease both;
   }
-  .adj-card.danger{border-color:#fca5a5;background:#fef2f2;}
-  .adj-card.contraindicated{border-color:#fca5a5;background:#fef2f2;}
+  .adj-card.danger,.adj-card.contraindicated{border-color:#fca5a5;background:#fef2f2;}
   .adj-card.caution{border-color:#fde68a;background:#fffbeb;}
   .adj-drug{font-weight:700;font-size:15px;margin-bottom:4px;}
   .adj-sev{display:inline-block;font-size:11px;font-weight:700;text-transform:uppercase;
     padding:2px 8px;border-radius:6px;background:#fff;border:1px solid currentColor;margin-bottom:6px;}
   .adj-text{font-size:14px;color:#334155;line-height:1.5;}
+
   .empty{color:var(--muted);font-size:14px;text-align:center;padding:20px 0;}
   .error{background:#fee2e2;color:#991b1b;padding:14px 18px;border-radius:12px;margin-bottom:16px;font-size:14px;}
   .disclaimer{font-size:12px;color:#94a3b8;margin-top:18px;line-height:1.5;}
-  .section-title{font-size:14px;font-weight:700;color:var(--muted);margin:0 0 12px;text-transform:uppercase;letter-spacing:.5px;}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="top"><a href="/">&larr; กลับหน้าหลัก</a></div>
-  <h1>🧪 อ่านผลแลป</h1>
-  <div class="sub">กรอกค่าแลปเพื่อดูว่าสูง/ต่ำ/ปกติ พร้อมคำแนะนำปรับยาอัตโนมัติ (อ้างอิงจาก drug_interaction.pl)</div>
+  <h1>💊 ตรวจยาชนกัน + อ่านผลแลป</h1>
+  <div class="sub">กรอกรายชื่อยาและค่าแลป (ถ้ามี) ระบบจะตรวจ interaction ระหว่างยา อ่านผลแลป และแนะนำการปรับยาตามผลแลปให้ในหน้าเดียว</div>
 
   {% if error %}
   <div class="error">⚠️ {{ error }}</div>
   {% endif %}
 
-  <form class="card" method="POST" action="/lab-check">
-    <div class="section-title">ค่าแลป</div>
+  <form class="card" method="POST" action="/interaction-check">
+    <div class="section-title">รายชื่อยาที่ผู้ป่วยใช้อยู่</div>
+    <textarea name="drugs" placeholder="พิมพ์ชื่อยา คั่นด้วยเครื่องหมายจุลภาค &quot;,&quot; เช่น spironolactone, enalapril, simvastatin, amlodipine">{{ form_values.get('drugs', '') }}</textarea>
+    <div class="unit">ใส่ได้ตั้งแต่ 2 รายการขึ้นไปเพื่อตรวจว่ายาชนกันหรือไม่ (ระบบจะตรวจทุกคู่ที่เป็นไปได้)</div>
+
+    <div class="section-title" style="margin-top:22px;">ค่าแลป (ไม่บังคับ)</div>
     <div class="grid">
       {% for key, meta in lab_definitions.items() %}
       <div>
@@ -8355,22 +8335,36 @@ LAB_CHECK_TEMPLATE = """
       {% endfor %}
     </div>
 
-    <div style="margin-top:20px;">
-      <label>รายชื่อยาที่ผู้ป่วยใช้อยู่ (คั่นด้วยเครื่องหมายจุลภาค ",")</label>
-      <input type="text" name="drugs" placeholder="เช่น spironolactone, enalapril, simvastatin"
-             value="{{ form_values.get('drugs', '') }}">
-      <div class="unit">ใส่เพื่อให้ระบบแนะนำการปรับยาตามผลแลปโดยอัตโนมัติ (ไม่บังคับ)</div>
-    </div>
-
-    <button class="btn" type="submit">อ่านผลแลป</button>
+    <button class="btn" type="submit">ตรวจยา + อ่านผลแลป</button>
   </form>
 
-  {% if labs is not none %}
+  {% if submitted %}
+  <div class="card">
+    <div class="section-title">
+      ผลตรวจยาชนกัน (Drug Interaction)
+      {% if results %}<span class="pill-count">{{ results|length }} คู่ที่พบ</span>{% endif %}
+    </div>
+    {% if results %}
+      {% for r in results %}
+      <div class="int-card risk-{{ (r.Risk or '')|lower }}">
+        <div class="int-pair">{{ r.Drug_1 }} &harr; {{ r.Drug_2 }}</div>
+        <div class="int-tags">
+          <span class="tag risk-{{ (r.Risk or '')|lower }}">Risk {{ r.Risk }}</span>
+          <span class="tag risk-{{ (r.Risk or '')|lower }}">{{ r.Severity }}</span>
+        </div>
+        <div class="int-text">{{ r.Summary }}</div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty">ไม่พบยาชนกันจากรายชื่อที่กรอก (หรือยังไม่ได้กรอกยาอย่างน้อย 2 รายการ)</div>
+    {% endif %}
+  </div>
+
   <div class="card">
     <div class="section-title">ผลการอ่านค่าแลป</div>
     {% if labs %}
       {% for lab in labs %}
-      <div class="lab-result" style="background:var(--{{ lab.status }}-bg,#f8fafc);">
+      <div class="lab-result">
         <div class="lab-head">
           <div class="lab-name">{{ lab_definitions.get(lab.key, {}).get('label', lab.key) }}</div>
           <span class="badge {{ lab.status }}">{{ status_labels.get(lab.status, {}).get('text', lab.status) }}</span>
@@ -8384,7 +8378,7 @@ LAB_CHECK_TEMPLATE = """
       </div>
       {% endfor %}
     {% else %}
-      <div class="empty">ยังไม่มีผลแลปที่อ่านได้ ลองกรอกค่าอย่างน้อย 1 รายการ</div>
+      <div class="empty">ยังไม่มีผลแลปที่อ่านได้ ลองกรอกค่าอย่างน้อย 1 รายการด้านบน</div>
     {% endif %}
   </div>
 
@@ -8393,19 +8387,19 @@ LAB_CHECK_TEMPLATE = """
     {% if adjustments %}
       {% for adj in adjustments %}
       <div class="adj-card {{ adj.severity }}">
-        <div class="adj-sev" style="color:{{ '#dc2626' if adj.severity in ['danger','contraindicated'] else '#d97706' }};">{{ adj.severity }}</div>
+        <div class="adj-sev">{{ adj.severity }}</div>
         <div class="adj-drug">{{ adj.drug }} &times; {{ adj.lab_label }}</div>
         <div class="adj-text">{{ adj.recommendation }}</div>
       </div>
       {% endfor %}
     {% else %}
-      <div class="empty">ไม่พบคำแนะนำปรับยาสำหรับค่าที่กรอก (หรือยังไม่ได้ใส่รายชื่อยา)</div>
+      <div class="empty">ไม่พบคำแนะนำปรับยาสำหรับค่าที่กรอก (ต้องใส่ทั้งยาและค่าแลปที่เกี่ยวข้องจึงจะประเมินได้)</div>
     {% endif %}
   </div>
   {% endif %}
 
   <div class="disclaimer">
-    ⚠️ ผลจากหน้านี้เป็นการอ้างอิง threshold เบื้องต้นเพื่อความปลอดภัยเท่านั้น
+    ⚠️ ผลจากหน้านี้เป็นการอ้างอิง threshold และฐานข้อมูล interaction เบื้องต้นเพื่อความปลอดภัยเท่านั้น
     ไม่ใช่คำวินิจฉัยทางการแพทย์ โปรดให้เภสัชกร/แพทย์ตรวจทานก่อนใช้ตัดสินใจทางคลินิกจริง
   </div>
 </div>
@@ -8437,16 +8431,26 @@ def _lab_bar_percent(lab_result):
     return max(2, min(98, round(pct, 1)))
 
 
-@app.route("/lab-check", methods=["GET", "POST"])
-def lab_check():
+@app.route("/interaction-check", methods=["GET", "POST"])
+def interaction_check():
 
-    labs = None
+    results = []
+    labs = []
     adjustments = []
     error = None
     form_values = {}
+    submitted = False
 
     if request.method == "POST":
+        submitted = True
         form_values = request.form.to_dict()
+
+        drugs_raw = request.form.get("drugs", "")
+        drug_names = [
+            name.strip()
+            for name in drugs_raw.replace("\n", ",").split(",")
+            if name.strip()
+        ]
 
         lab_values = {}
         for key in LAB_DEFINITIONS:
@@ -8454,33 +8458,38 @@ def lab_check():
             if raw:
                 lab_values[key] = raw
 
-        drugs_raw = request.form.get("drugs", "")
-        drug_names = [
-            name.strip()
-            for name in drugs_raw.split(",")
-            if name.strip()
-        ]
+        try:
+            results = check_drug_interactions(drug_names)
+        except Exception as e:
+            error = "ไม่สามารถตรวจยาชนกันได้: {}".format(e)
 
         try:
-            result = check_lab_values(lab_values, drug_names)
-            labs = result["labs"]
+            lab_result = check_lab_values(lab_values, drug_names)
+            labs = lab_result["labs"]
             for lab in labs:
                 lab["bar_pct"] = _lab_bar_percent(lab)
-            adjustments = result["adjustments"]
+            adjustments = lab_result["adjustments"]
         except Exception as e:
-            error = "ไม่สามารถอ่านผลแลปได้: {}".format(e)
-            labs = []
+            lab_error = "ไม่สามารถอ่านผลแลปได้: {}".format(e)
+            error = "{} ; {}".format(error, lab_error) if error else lab_error
 
     return render_template_string(
-        LAB_CHECK_TEMPLATE,
-        lab_definitions=LAB_DEFINITIONS,
-        status_labels=LAB_STATUS_LABELS,
+        INTERACTION_LAB_TEMPLATE,
+        results=results,
         labs=labs,
         adjustments=adjustments,
+        lab_definitions=LAB_DEFINITIONS,
+        status_labels=LAB_STATUS_LABELS,
         error=error,
         form_values=form_values,
+        submitted=submitted,
     )
 
+
+@app.route("/lab-check", methods=["GET", "POST"])
+def lab_check():
+    """คงเส้นทางเดิมไว้เพื่อ backward-compat — ฟีเจอร์อ่านผลแลปย้ายไปรวมกับ /interaction-check แล้ว"""
+    return redirect(url_for("interaction_check"))
 
 # ============================================================
 # APPOINTMENT
