@@ -114,6 +114,128 @@ PROLOG_DRUG_ATOMS = {
 }
 
 
+# ============================================================
+# INDICATION CHECKING (ยา <-> ICD-10)
+# rule-based เหมือน drug interaction: เพิ่ม fact ใน drug_interaction.pl
+# เป็น indication(DrugAtom, Icd10Atom).  ไม่ใช้ AI/ML
+#
+# หมายเหตุ: รายการนี้เป็นตัวอย่างเริ่มต้นสำหรับกลุ่มยา NCD (HT/DM)
+# ทีมงานต้องตรวจทานความถูกต้องทางคลินิกก่อนใช้งานจริง และเพิ่ม
+# predicate indication/2 ใน drug_interaction.pl ให้ตรงกับรายการนี้ เช่น
+#
+#   indication(losartan, i10).
+#   indication(enalapril, i10).
+#   indication(pioglitazone, e11).
+#   indication(glipizide, e11).
+#   indication(insulin_nph, e11).
+#   indication(simvastatin, e78).
+#   indication(spironolactone, i50).
+#
+DRUG_INDICATION_ATOMS = {
+    "losartan": ["i10"],          # Essential hypertension
+    "enalapril": ["i10"],
+    "captopril": ["i10"],
+    "amlodipine": ["i10"],
+    "atenolol": ["i10"],
+    "carvedilol": ["i10", "i50"],  # HT หรือ Heart failure
+    "metoprolol": ["i10", "i50"],
+    "methyldopa": ["i10"],
+    "spironolactone": ["i50"],     # Heart failure
+    "amiloride_hydrochlorothiazide": ["i10"],
+    "pioglitazone": ["e11"],       # Type 2 diabetes
+    "glipizide": ["e11"],
+    "insulin_nph": ["e11"],
+    "propranolol": ["i10", "i47"],
+    "simvastatin": ["e78"],        # Dyslipidemia
+}
+
+# ชื่อ ICD-10 แบบอ่านง่าย ไว้แสดงผลในหน้าเว็บ/รายงาน
+ICD10_LABELS = {
+    "i10": "Essential (primary) hypertension",
+    "i50": "Heart failure",
+    "e11": "Type 2 diabetes mellitus",
+    "e78": "Disorders of lipoprotein metabolism (dyslipidemia)",
+    "i47": "Paroxysmal tachycardia",
+}
+
+
+def resolve_indications_for_drug(drug_name):
+    """คืนรายการ ICD-10 atom ที่เป็น indication ที่ยอมรับได้ของยาตัวนี้"""
+    atom = resolve_prolog_drug(drug_name)
+    if not atom:
+        return atom, []
+    return atom, DRUG_INDICATION_ATOMS.get(atom, [])
+
+
+def check_drug_indications(patient):
+    """
+    ตรวจว่ายาที่สั่งแต่ละตัว มี ICD-10 diagnosis ของผู้ป่วยรองรับหรือไม่
+    ต้องการให้ patient (dict จาก patient_json) มีฟิลด์ 'diagnosis_icd10'
+    เป็น list ของรหัส ICD-10 เช่น ["I10", "E11"]
+
+    คืนค่าเป็น list ของ dict:
+      { "Drug": ..., "Matched": bool, "Expected_Indications": [...],
+        "Note": ... }
+
+    ถ้า patient ไม่มีข้อมูล diagnosis เลย จะคืน note อธิบายข้อจำกัดแทน
+    การฟันธงว่าใช้ยาไม่ตรงข้อบ่งใช้ (กัน false positive)
+    """
+    diagnosis_raw = patient.get("diagnosis_icd10") or []
+    diagnosis_codes = {
+        str(code).strip().lower()
+        for code in diagnosis_raw
+        if str(code).strip()
+    }
+
+    medicines = patient.get("medicines", []) or []
+    results = []
+
+    for medicine in medicines:
+        drug_name = str(medicine.get("name", "") or "").strip()
+        if not drug_name:
+            continue
+
+        atom, expected_codes = resolve_indications_for_drug(drug_name)
+
+        if atom is None:
+            # ยาไม่อยู่ใน knowledge base เลย ไม่ตัดสิน ให้เภสัชกรพิจารณาเอง
+            continue
+
+        if not expected_codes:
+            # ยังไม่มีข้อมูล indication ของยาตัวนี้ใน knowledge base
+            continue
+
+        if not diagnosis_codes:
+            results.append({
+                "Drug": drug_name,
+                "Matched": None,
+                "Expected_Indications": [
+                    ICD10_LABELS.get(c, c) for c in expected_codes
+                ],
+                "Note": (
+                    "ไม่มีข้อมูลการวินิจฉัย (diagnosis) ของผู้ป่วยในระบบ "
+                    "ไม่สามารถยืนยันได้ว่ายาตรงข้อบ่งใช้หรือไม่"
+                ),
+            })
+            continue
+
+        matched = bool(diagnosis_codes & set(expected_codes))
+
+        if not matched:
+            results.append({
+                "Drug": drug_name,
+                "Matched": False,
+                "Expected_Indications": [
+                    ICD10_LABELS.get(c, c) for c in expected_codes
+                ],
+                "Note": (
+                    "ไม่พบการวินิจฉัยของผู้ป่วยที่ตรงกับข้อบ่งใช้ปกติของยานี้ "
+                    "กรุณาตรวจสอบกับแพทย์ผู้สั่งยา"
+                ),
+            })
+
+    return results
+
 
 # ไฟล์ต้นฉบับใบสั่งยาที่ระบบเก็บไว้เพื่อ Sync แบบ Real-time
 PRESCRIPTION_SOURCE_FILE = os.path.join(
@@ -819,6 +941,94 @@ def check_drug_interactions(drug_names):
 
 
 # ============================================================
+# LAB-BASED DOSE ADJUSTMENT / ALTERNATIVE DRUG SUGGESTION
+# rule-based จาก eGFR (renal function) - ไม่ใช้ AI/ML
+# แนวทางเดียวกับ Drug Interaction: เขียนเป็นกฎ if-then ชัดเจน
+# ตรวจสอบ/แก้ไขได้ง่าย และทีมเภสัชกรสามารถ review เกณฑ์ได้ตรงๆ
+#
+# หมายเหตุ: ค่า threshold / คำแนะนำด้านล่างเป็นตัวอย่างเริ่มต้นเท่านั้น
+# ต้องให้เภสัชกร/แพทย์ที่ปรึกษาโปรเจกต์ตรวจทานก่อนใช้งานจริง
+# ============================================================
+
+EGFR_DOSE_RULES = {
+    # atom (ตาม PROLOG_DRUG_ATOMS): [ (min_egfr_exclusive_of_prev, max_egfr, action) ... ]
+    # เรียงจาก eGFR ต่ำสุด -> สูงสุด, ใช้ช่วงแรกที่ egfr <= max_egfr
+    "metformin_placeholder": [],  # ตัวอย่างโครงสร้าง เผื่อเพิ่ม metformin ในอนาคต
+    "glipizide": [
+        (0, 30, "ควรหลีกเลี่ยงหรือลดขนาดยา และติดตามภาวะน้ำตาลต่ำใกล้ชิด (eGFR < 30)"),
+        (30, 60, "ควรพิจารณาลดขนาดยาและติดตามอาการ hypoglycemia (eGFR 30-59)"),
+    ],
+    "insulin_nph": [
+        (0, 30, "ความต้องการอินซูลินอาจลดลง ควรลดขนาดและติดตามน้ำตาลถี่ขึ้น (eGFR < 30)"),
+    ],
+    "spironolactone": [
+        (0, 30, "ห้ามใช้/ควรเลี่ยง เสี่ยง hyperkalemia รุนแรง (eGFR < 30)"),
+        (30, 50, "ใช้ด้วยความระมัดระวัง ติดตามค่า K+ ใกล้ชิด (eGFR 30-49)"),
+    ],
+    "amiloride_hydrochlorothiazide": [
+        (0, 30, "ห้ามใช้/ควรเลี่ยง thiazide มักไม่ได้ผลและเสี่ยง hyperkalemia (eGFR < 30)"),
+    ],
+    "enalapril": [
+        (0, 30, "เริ่มขนาดต่ำและปรับช้าลง ติดตาม K+/Creatinine ใกล้ชิด (eGFR < 30)"),
+    ],
+    "captopril": [
+        (0, 30, "เริ่มขนาดต่ำและปรับช้าลง ติดตาม K+/Creatinine ใกล้ชิด (eGFR < 30)"),
+    ],
+    "losartan": [
+        (0, 30, "เริ่มขนาดต่ำ ติดตาม K+/Creatinine ใกล้ชิด (eGFR < 30)"),
+    ],
+}
+
+# ยาทางเลือกกลุ่มเดียวกัน เมื่อยาตัวหลักมี contraindication ด้าน renal function
+EGFR_ALTERNATIVE_SUGGESTIONS = {
+    "glipizide": ["insulin_nph (พิจารณาเปลี่ยนเป็นอินซูลินหาก eGFR ต่ำมาก)"],
+    "spironolactone": ["ปรึกษาแพทย์เรื่องยาขับปัสสาวะกลุ่มอื่นที่ไม่กระทบ K+ มากเท่า"],
+}
+
+
+def check_lab_based_adjustments(patient):
+    """
+    ตรวจว่ายาที่สั่งตัวใดต้องปรับขนาด/หลีกเลี่ยง ตามค่า eGFR ของผู้ป่วย
+    ต้องการให้ patient (dict จาก patient_json) มีฟิลด์ 'egfr' เป็นตัวเลข
+
+    คืนค่าเป็น list ของ dict:
+      { "Drug": ..., "Egfr": ..., "Recommendation": ..., "Alternatives": [...] }
+
+    ถ้าไม่มีค่า eGFR ในระบบ จะคืน list ว่าง (ไม่ฟันธงโดยไม่มีข้อมูล)
+    """
+    egfr_raw = patient.get("egfr")
+
+    try:
+        egfr = float(egfr_raw)
+    except (TypeError, ValueError):
+        return []
+
+    medicines = patient.get("medicines", []) or []
+    results = []
+
+    for medicine in medicines:
+        drug_name = str(medicine.get("name", "") or "").strip()
+        if not drug_name:
+            continue
+
+        atom = resolve_prolog_drug(drug_name)
+        if not atom or atom not in EGFR_DOSE_RULES:
+            continue
+
+        for min_egfr, max_egfr, action in EGFR_DOSE_RULES[atom]:
+            if min_egfr <= egfr <= max_egfr:
+                results.append({
+                    "Drug": drug_name,
+                    "Egfr": egfr,
+                    "Recommendation": action,
+                    "Alternatives": EGFR_ALTERNATIVE_SUGGESTIONS.get(atom, []),
+                })
+                break
+
+    return results
+
+
+# ============================================================
 # CHECK DRUG INTERACTIONS BY ACTUAL MEDICATION DATES
 # ============================================================
 
@@ -951,6 +1161,20 @@ def find_column(
 
 
     return None
+
+
+def parse_icd10_list(value):
+    """แปลงค่าจากเซลล์ Diagnosis/ICD10 (คั่นด้วย , ; หรือ /) เป็น list ของรหัส"""
+    if value is None:
+        return []
+
+    text = str(value).strip()
+    if not text:
+        return []
+
+    import re
+    parts = re.split(r"[,;/]+", text)
+    return [p.strip() for p in parts if p.strip()]
 
 
 # ============================================================
@@ -1566,6 +1790,36 @@ def read_prescription_excel(
     )
 
 
+    # เพิ่มสำหรับ Indication checking (ยา <-> ICD-10)
+    diagnosis_col = find_column(
+        headers,
+        [
+            "Diagnosis",
+            "diagnosis",
+            "ICD10",
+            "ICD-10",
+            "icd10",
+            "icd_10",
+            "การวินิจฉัย",
+            "รหัสโรค"
+        ]
+    )
+
+
+    # เพิ่มสำหรับ Lab-based dose adjustment (eGFR)
+    egfr_col = find_column(
+        headers,
+        [
+            "eGFR",
+            "egfr",
+            "GFR",
+            "gfr",
+            "ค่าไต",
+            "การทำงานของไต"
+        ]
+    )
+
+
     if hn_col is None:
 
         wb.close()
@@ -1687,6 +1941,25 @@ def read_prescription_excel(
             )
 
 
+            # เพิ่มสำหรับ Indication checking
+            diagnosis_icd10 = []
+            if diagnosis_col:
+                diagnosis_icd10 = parse_icd10_list(
+                    row_dict.get(diagnosis_col)
+                )
+
+
+            # เพิ่มสำหรับ Lab-based dose adjustment
+            egfr_value = None
+            if egfr_col:
+                raw_egfr = row_dict.get(egfr_col)
+                try:
+                    if raw_egfr is not None and str(raw_egfr).strip() != "":
+                        egfr_value = float(raw_egfr)
+                except (TypeError, ValueError):
+                    egfr_value = None
+
+
             patients[hn] = {
 
                 "hn": hn,
@@ -1713,6 +1986,12 @@ def read_prescription_excel(
 
                 "required_days":
                     required_days,
+
+                "diagnosis_icd10":
+                    diagnosis_icd10,
+
+                "egfr":
+                    egfr_value,
 
                 "medicines": [],
 
@@ -4568,9 +4847,6 @@ def register_thai_fonts():
 
 
     possible_normal_fonts = [
-        os.path.join(BASE_DIR, "static", "fonts", "NotoSansThai-Regular.ttf"),
-        os.path.join(BASE_DIR, "static", "fonts", "THSarabunNew.ttf"),
-
         "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf",
         "/usr/share/fonts/opentype/noto/NotoSansThai-Regular.ttf",
 
@@ -4590,9 +4866,6 @@ def register_thai_fonts():
 
 
     possible_bold_fonts = [
-        os.path.join(BASE_DIR, "static", "fonts", "NotoSansThai-Bold.ttf"),
-        os.path.join(BASE_DIR, "static", "fonts", "THSarabunNew-Bold.ttf"),
-
         "/usr/share/fonts/truetype/noto/NotoSansThai-Bold.ttf",
         "/usr/share/fonts/opentype/noto/NotoSansThai-Bold.ttf",
 
@@ -4668,15 +4941,6 @@ def register_thai_fonts():
 
 
     if normal_font is None:
-
-        print(
-            "WARNING: No Thai font file found (looked in {}). "
-            "Falling back to Helvetica, which cannot render Thai text - "
-            "Thai characters in the PDF will be blank. Place a Thai .ttf "
-            "font (e.g. NotoSansThai-Regular.ttf) in static/fonts/.".format(
-                os.path.join(BASE_DIR, "static", "fonts")
-            )
-        )
 
         normal_font = "Helvetica"
 
@@ -5276,10 +5540,8 @@ def create_consult_pdf():
                         """
                         SELECT id, hn, dispense_date, appointment_date, patient_json
                         FROM prescription_queue
-                        WHERE hn = ?
-                        ORDER BY
-                            CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
-                            id DESC
+                        WHERE hn = ? AND status = 'pending'
+                        ORDER BY id DESC
                         LIMIT 1
                         """,
                         (hn_lookup,)
@@ -5293,7 +5555,7 @@ def create_consult_pdf():
                     except Exception:
                         queue_patient = {}
 
-                    if row_lookup is not None:
+                    if queue_patient:
                         queue_patient["queue_id"] = row_lookup["id"]
                         queue_patient["hn"] = str(row_lookup["hn"] or queue_patient.get("hn", hn_lookup)).strip()
 
@@ -6648,7 +6910,7 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
     <table>
       <thead><tr>
         <th>ลำดับ</th><th>ชื่อยา</th><th>ขนาดยา</th><th>ครั้ง/วัน</th>
-        <th>จำนวนที่สั่งจ่าย</th><th>จำนวนที่ต้องจ่ายจริง</th>
+        <th>จำนวนที่ต้องจ่าย</th><th>จำนวนวันที่ใช้ได้</th>
         <th>Stock ปัจจุบัน</th><th>สถานะ Stock</th><th>ผลตรวจ</th>
       </tr></thead>
       <tbody>
@@ -6659,7 +6921,7 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
         <td>{{ m.strength or '-' }}</td>
         <td>{{ m.times_per_day }}</td>
         <td>{{ m.quantity }}</td>
-        <td class="{{ 'bad' if (m.quantity|float) < (m.expected_quantity|float) else 'ok' }}">{{ m.expected_quantity }}</td>
+        <td>{{ ('%.1f'|format((m.quantity|float / (m.times_per_day|float)) if (m.times_per_day|float)>0 else 0)) }} วัน</td>
         <td><b>{{ m.stock_quantity|default(0) }}</b> {{ m.stock_unit or '' }}</td>
         <td class="{{ 'ok' if m.stock_found and m.stock_status == 'มีเพียงพอ' else 'bad' }}">
           {% if m.stock_found and m.stock_status == 'มีเพียงพอ' %}✓ มีเพียงพอ{% else %}✗ ไม่เพียงพอ{% endif %}
@@ -6707,6 +6969,35 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
     {% endif %}
   </div>
 
+  <div class="section">
+    <h3>🩺 Indication Checking (ยา ↔ การวินิจฉัย)</h3>
+    {% if patient.indication_results %}
+      {% for x in patient.indication_results %}
+      <div class="interaction {{ 'bad' if x.Matched == False else 'summary' }}">
+        {% if x.Matched == False %}❌{% else %}ℹ️{% endif %}
+        <b>{{ x.Drug }}</b> — {{ x.Note }}
+        {% if x.Expected_Indications %}<br>ข้อบ่งใช้ปกติ: {{ x.Expected_Indications|join(', ') }}{% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="summary ok">✅ ไม่พบยาที่ใช้ผิดข้อบ่งใช้ (หรือยังไม่มีข้อมูล Diagnosis ในไฟล์ใบสั่งยา)</div>
+    {% endif %}
+  </div>
+
+  <div class="section">
+    <h3>🧪 Lab-based Dose Adjustment (eGFR)</h3>
+    {% if patient.lab_adjustment_results %}
+      {% for x in patient.lab_adjustment_results %}
+      <div class="interaction bad">
+        ❌ <b>{{ x.Drug }}</b> (eGFR {{ x.Egfr }}) — {{ x.Recommendation }}
+        {% if x.Alternatives %}<br>ยาทางเลือก: {{ x.Alternatives|join(', ') }}{% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="summary ok">✅ ไม่พบคำแนะนำปรับขนาดยาจาก eGFR (หรือยังไม่มีข้อมูล eGFR ในไฟล์ใบสั่งยา)</div>
+    {% endif %}
+  </div>
+
   <div class="actions">
   {% if patient.non_stock_problem and not patient.consult_approved %}
     <div class="warn" style="margin-bottom:10px">⚠️ พบปัญหาที่ต้อง Consult</div>
@@ -6750,6 +7041,12 @@ def _prepare_unified_result_patient(patient):
     patient = apply_stock_to_patient(patient)
     patient["stock_sufficient"] = patient_stock_is_sufficient(patient)
 
+    # เพิ่ม: Indication checking (ยา <-> ICD-10) และ Lab-based dose adjustment (eGFR)
+    # ทั้งสองอย่างเป็น rule-based ทำงานได้ก็ต่อเมื่อไฟล์ใบสั่งยามีคอลัมน์
+    # Diagnosis/ICD10 และ/หรือ eGFR เท่านั้น ถ้าไม่มีคอลัมน์เหล่านี้จะคืน list ว่าง
+    patient["indication_results"] = check_drug_indications(patient)
+    patient["lab_adjustment_results"] = check_lab_based_adjustments(patient)
+
     # สร้าง Consult PDF ใบเดียวเมื่อมี Days Supply หรือ Drug Interaction
     # (ไม่รวม Stock ใน Consult)
     has_days_problem = bool(
@@ -6759,8 +7056,14 @@ def _prepare_unified_result_patient(patient):
     has_interaction = bool(
         patient.get("interaction_results", []) or []
     )
+    has_indication_issue = bool(
+        patient.get("indication_results", []) or []
+    )
+    has_lab_issue = bool(
+        patient.get("lab_adjustment_results", []) or []
+    )
 
-    if has_days_problem or has_interaction:
+    if has_days_problem or has_interaction or has_indication_issue or has_lab_issue:
         try:
             # ลืม/ไม่ใช้ PDF Consult เก่าทันทีที่เตรียมผลใหม่
             # เพื่อบังคับให้สร้าง PDF จาก interaction_results ชุดล่าสุด
@@ -6793,6 +7096,8 @@ def _prepare_unified_result_patient(patient):
     patient["non_stock_problem"] = bool(
         patient.get("days_supply_has_problem", False)
         or patient.get("interaction_results", [])
+        or patient.get("indication_results", [])
+        or patient.get("lab_adjustment_results", [])
     )
     patient["consult_approved"] = bool(patient.get("_consult_approved", False))
     return patient
@@ -8014,34 +8319,44 @@ def interaction_check():
 
     drug2 = ""
 
+    error = None
+
 
     if request.method == "POST":
 
-        drug1 = request.form.get(
-            "drug1",
-            ""
-        )
+        # ----------------------------------------------------
+        # INPUT VALIDATION
+        # จำกัดความยาว/ตัดช่องว่าง กันข้อมูลแปลกปลอมก่อนส่งต่อ
+        # ไปยัง resolve_prolog_drug / subprocess เรียก swipl
+        # ----------------------------------------------------
+        MAX_DRUG_NAME_LEN = 100
 
+        drug1 = request.form.get("drug1", "").strip()[:MAX_DRUG_NAME_LEN]
+        drug2 = request.form.get("drug2", "").strip()[:MAX_DRUG_NAME_LEN]
 
-        drug2 = request.form.get(
-            "drug2",
-            ""
-        )
-
-
-        results = check_drug_interactions(
-            [
-                drug1,
-                drug2
-            ]
-        )
+        if not drug1 or not drug2:
+            error = "กรุณากรอกชื่อยาทั้งสองตัวให้ครบ"
+        elif drug1.lower() == drug2.lower():
+            error = "กรุณาเลือกยาสองตัวที่ไม่ซ้ำกัน"
+        else:
+            try:
+                results = check_drug_interactions(
+                    [
+                        drug1,
+                        drug2
+                    ]
+                )
+            except Exception as e:
+                print("ERROR interaction_check:", repr(e))
+                error = "เกิดข้อผิดพลาดระหว่างตรวจสอบ Drug Interaction: " + str(e)
 
 
     return render_template(
         "interaction_check.html",
         results=results,
         drug1=drug1,
-        drug2=drug2
+        drug2=drug2,
+        error=error
     )
 
 
@@ -8075,14 +8390,42 @@ def history():
 
 # ============================================================
 # CLEAR HISTORY
-# TESTING ONLY
+# TESTING ONLY - ต้องยืนยันตัวตนด้วย admin key ก่อนลบข้อมูลจริง
+# ตั้งค่า key ผ่าน environment variable CLEAR_HISTORY_KEY
+# (ไม่ hardcode ค่า default ที่คาดเดาได้ในโค้ด เพื่อกันการลบข้อมูลโดยไม่ตั้งใจ)
 # ============================================================
+
+CLEAR_HISTORY_KEY = os.environ.get("CLEAR_HISTORY_KEY")
+
 
 @app.route(
     "/clear-history",
     methods=["POST"]
 )
 def clear_history():
+
+    # --------------------------------------------------------
+    # AUTH CHECK: ต้องมี admin key ที่ถูกต้องเท่านั้นถึงลบข้อมูลได้
+    # --------------------------------------------------------
+    if not CLEAR_HISTORY_KEY:
+        return jsonify({
+            "error": (
+                "ปิดการใช้งาน /clear-history ไว้ก่อน: "
+                "ยังไม่ได้ตั้งค่า CLEAR_HISTORY_KEY ใน environment"
+            )
+        }), 403
+
+    provided_key = (
+        request.form.get("admin_key")
+        or request.headers.get("X-Admin-Key")
+        or ""
+    )
+
+    if provided_key != CLEAR_HISTORY_KEY:
+        print("ERROR CLEAR HISTORY: unauthorized attempt")
+        return jsonify({
+            "error": "Unauthorized: admin key ไม่ถูกต้อง"
+        }), 403
 
     conn = get_db()
 
