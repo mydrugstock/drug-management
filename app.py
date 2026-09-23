@@ -770,7 +770,8 @@ def _prolog_query_pair(atom_a, atom_b):
     print("Goal:", goal)
 
     proc = subprocess.run(
-        [swipl, "-q", "-f", "none", "-s", PROLOG_FILE, "-g", goal],
+        [swipl, "-q", "-f", "none", "--encoding=utf8",
+         "-s", PROLOG_FILE, "-g", goal],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -843,8 +844,13 @@ def _run_prolog_goal(goal, timeout=10):
             "กรุณาติดตั้ง SWI-Prolog หรือแจ้งตำแหน่งที่ติดตั้ง"
         )
 
+    print("=== LAB/PROLOG GOAL ===")
+    print("swipl path:", swipl)
+    print("Goal:", goal)
+
     proc = subprocess.run(
-        [swipl, "-q", "-f", "none", "-s", PROLOG_FILE, "-g", goal],
+        [swipl, "-q", "-f", "none", "--encoding=utf8",
+         "-s", PROLOG_FILE, "-g", goal],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -853,6 +859,11 @@ def _run_prolog_goal(goal, timeout=10):
         timeout=timeout,
         cwd=BASE_DIR,
     )
+
+    print("=== LAB/PROLOG RESULT ===")
+    print("Return code:", proc.returncode)
+    print("stdout:", repr(proc.stdout.strip()))
+    print("stderr:", repr(proc.stderr.strip()))
 
     if proc.returncode != 0:
         err = proc.stderr.strip() or proc.stdout.strip() or "(ไม่มีข้อความจาก SWI-Prolog)"
