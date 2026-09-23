@@ -711,6 +711,16 @@ LAB_ATOM_ALIASES = {
     "scr": "creatinine",
     "sodium": "sodium",
     "na": "sodium",
+
+    # ---- ความดันโลหิต (Blood Pressure) ----
+    "sbp": "sbp",
+    "systolic": "sbp",
+    "systolicbp": "sbp",
+    "bpsystolic": "sbp",
+    "dbp": "dbp",
+    "diastolic": "dbp",
+    "diastolicbp": "dbp",
+    "bpdiastolic": "dbp",
 }
 
 
