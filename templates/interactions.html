@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <title>สต๊อกความรู้ยาชนกัน</title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            margin: 0;
+            background: #f4f7fb;
+            color: #1f2937;
+        }
+
+        header {
+            background: #7c3aed;
+            color: white;
+            padding: 25px 40px;
+        }
+
+        header h1 {
+            margin: 0 0 8px 0;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 35px auto;
+            padding: 0 20px;
+        }
+
+        .back {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #7c3aed;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 1100px;
+        }
+
+        th {
+            background: #f3e8ff;
+            padding: 14px;
+            text-align: left;
+        }
+
+        td {
+            padding: 14px;
+            border-top: 1px solid #e5e7eb;
+            vertical-align: top;
+        }
+
+        .risk {
+            font-weight: bold;
+        }
+
+        .severity-major {
+            color: #dc2626;
+            font-weight: bold;
+        }
+
+        .severity-moderate {
+            color: #d97706;
+            font-weight: bold;
+        }
+
+        .empty {
+            text-align: center;
+            padding: 40px;
+            color: #6b7280;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+<header>
+
+    <h1>🧠 สต๊อกความรู้ยาชนกัน</h1>
+
+    <p>
+        ฐานความรู้ Drug Interaction จาก drug_interactions.xlsx
+    </p>
+
+</header>
+
+
+<div class="container">
+
+    <a href="/" class="back">
+        ← กลับหน้าหลัก
+    </a>
+
+
+    <div class="card">
+
+        {% if interactions %}
+
+        <table>
+
+            <thead>
+
+                <tr>
+
+                    <th>รหัส</th>
+
+                    <th>ยา 1</th>
+
+                    <th>ยา 2</th>
+
+                    <th>Risk</th>
+
+                    <th>Severity</th>
+
+                    <th>รายละเอียด</th>
+
+                    <th>การจัดการ</th>
+
+                    <th>แหล่งอ้างอิง</th>
+
+                </tr>
+
+            </thead>
+
+
+            <tbody>
+
+                {% for item in interactions %}
+
+                <tr>
+
+                    <td>
+                        {{ item["Interaction_ID"] }}
+                    </td>
+
+                    <td>
+                        {{ item["Drug_1"] }}
+                    </td>
+
+                    <td>
+                        {{ item["Drug_2"] }}
+                    </td>
+
+                    <td class="risk">
+                        {{ item["Risk"] }}
+                    </td>
+
+                    <td>
+
+                        {% if item["Severity"] == "Major" %}
+
+                        <span class="severity-major">
+                            🔴 Major
+                        </span>
+
+                        {% elif item["Severity"] == "Moderate" %}
+
+                        <span class="severity-moderate">
+                            🟡 Moderate
+                        </span>
+
+                        {% else %}
+
+                        {{ item["Severity"] }}
+
+                        {% endif %}
+
+                    </td>
+
+                    <td>
+                        {{ item["Summary"] }}
+                    </td>
+
+                    <td>
+                        {{ item["Management"] }}
+                    </td>
+
+                    <td>
+                        {{ item["Reference"] }}
+                    </td>
+
+                </tr>
+
+                {% endfor %}
+
+            </tbody>
+
+        </table>
+
+        {% else %}
+
+        <div class="empty">
+
+            ไม่พบข้อมูล Interaction
+
+        </div>
+
+        {% endif %}
+
+    </div>
+
+</div>
+
+</body>
+
+</html>
