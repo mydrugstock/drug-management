@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MedGuard | ระบบจัดการยา</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css') }}">
+</head>
+<body class="app-shell">
+{% include "partials/nav.html" %}
+
+<div class="page">
+    <section class="hero">
+        <div>
+            <div class="kicker">Clinical Decision Support</div>
+            <h1>อ่านใบสั่งยา ยาตีกัน และผลแลป ในที่เดียว</h1>
+            <p>
+                ระบบต้นแบบช่วยเภสัชกรตรวจจำนวนยาถึงวันนัด ยาที่อาจชนกัน
+                และแปลผลแลปว่าสูง ต่ำ หรือปกติ จากกฎในไฟล์ Prolog
+            </p>
+            <div class="btn-row">
+                <a class="btn-glow" href="/prescription">ตรวจสอบใบสั่งยา</a>
+                <a class="btn-ghost" href="/lab-check">แปลผลแลปทันที</a>
+            </div>
+        </div>
+        <div class="hero-panel">
+            <div class="pulse-row">
+                <div class="stat"><b>3</b><span>ค่าแลปหลัก</span></div>
+                <div class="stat"><b>สูง/ต่ำ</b><span>แปลผลอัตโนมัติ</span></div>
+                <div class="stat"><b>Prolog</b><span>ฐานความรู้</span></div>
+            </div>
+            <p class="hint" style="margin-top:18px;">
+                eGFR · โพแทสเซียม · ALT / AST · ครีเอตินิน · โซเดียม
+            </p>
+        </div>
+    </section>
+
+    <div class="menu-grid">
+        <a href="/prescription" class="feature wide">
+            <div class="icon">📄</div>
+            <h2>ตรวจสอบใบสั่งยา</h2>
+            <p>อัปโหลด Excel เพื่อดูจำนวนยา ยาตีกัน และผลแลปของผู้ป่วยในใบเดียวกัน</p>
+        </a>
+        <a href="/lab-check" class="feature">
+            <div class="icon">🧪</div>
+            <h2>แปลผลแลป</h2>
+            <p>กรอกค่าแลปแล้วระบบอ่านกฎจาก Prolog ว่าสูง ต่ำ หรือปกติ</p>
+        </a>
+        <a href="/interaction-check" class="feature">
+            <div class="icon">⚠️</div>
+            <h2>ตรวจสอบยาตีกัน</h2>
+            <p>ค้นหาคู่ยาที่มีความเสี่ยงจากฐานความรู้ของระบบ</p>
+        </a>
+        <a href="/stock" class="feature">
+            <div class="icon">📦</div>
+            <h2>สต๊อกยา</h2>
+            <p>ดูจำนวนยาคงเหลือและสถานะคลังจากไฟล์ข้อมูล</p>
+        </a>
+        <a href="/interactions" class="feature">
+            <div class="icon">🧠</div>
+            <h2>ฐานความรู้ยาตีกัน</h2>
+            <p>เปิดดูกฎ drug interaction ที่ระบบใช้ตรวจ</p>
+        </a>
+        <a href="/history" class="feature">
+            <div class="icon">📋</div>
+            <h2>ประวัติ</h2>
+            <p>ย้อนดูการตรวจสอบใบสั่งยาและการจ่ายยา</p>
+        </a>
+    </div>
+</div>
+<script src="{{ url_for('static', filename='js/theme.js') }}"></script>
+</body>
+</html>
