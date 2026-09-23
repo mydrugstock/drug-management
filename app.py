@@ -40,6 +40,7 @@ import sqlite3
 import json
 import shutil
 import subprocess
+import re
 
 from datetime import datetime, date
 
@@ -94,6 +95,51 @@ INTERACTION_FILE_FALLBACK = os.path.join(
 # ============================================================
 PROLOG_FILE = os.path.join(BASE_DIR, "drug_interaction.pl")
 
+LAB_KEY_ALIASES = {
+    "egfr": "egfr",
+    "gfr": "egfr",
+    "egfr_ml": "egfr",
+    "potassium": "potassium",
+    "k": "potassium",
+    "k+": "potassium",
+    "k_plus": "potassium",
+    "alt": "alt",
+    "sgpt": "alt",
+    "ast": "ast",
+    "sgot": "ast",
+    "creatinine": "creatinine",
+    "cr": "creatinine",
+    "scr": "creatinine",
+    "sodium": "sodium",
+    "na": "sodium",
+    "na+": "sodium",
+}
+
+LAB_LABELS = {
+    "egfr": "eGFR (การทำงานของไต)",
+    "potassium": "โพแทสเซียม (K+)",
+    "alt": "ALT (เอนไซม์ตับ)",
+    "ast": "AST (เอนไซม์ตับ)",
+    "creatinine": "ครีเอตินิน (Creatinine)",
+    "sodium": "โซเดียม (Na+)",
+}
+
+LAB_STATUS_TH = {
+    "normal": "ปกติ",
+    "high": "สูง",
+    "low": "ต่ำ",
+}
+
+# ค่าสำรองเมื่อเรียก SWI-Prolog ไม่ได้ ต้องสอดคล้องกับ drug_interaction.pl
+LAB_RANGE_FALLBACK = {
+    "egfr": (90.0, 999.0, "ml/min/1.73m2"),
+    "potassium": (3.5, 5.0, "mEq/L"),
+    "alt": (0.0, 40.0, "U/L"),
+    "ast": (0.0, 40.0, "U/L"),
+    "creatinine": (0.6, 1.3, "mg/dL"),
+    "sodium": (135.0, 145.0, "mEq/L"),
+}
+
 PROLOG_DRUG_ATOMS = {
     "amiloride+hydrochlorothiazide": "amiloride_hydrochlorothiazide",
     "amiloride_hydrochlorothiazide": "amiloride_hydrochlorothiazide",
@@ -113,34 +159,6 @@ PROLOG_DRUG_ATOMS = {
     "amlodipine": "amlodipine",
 }
 
-
-# ============================================================
-# LAB REFERENCE (สำหรับหน้าอ่านผลแลป)
-# ============================================================
-# key ต้องตรงกับ lab_range/4 และ lab_status/4 ใน drug_interaction.pl
-LAB_DEFINITIONS = {
-    "egfr": {
-        "label": "eGFR (การทำงานของไต)",
-        "placeholder": "เช่น 75",
-        "unit": "ml/min/1.73m²",
-    },
-    "potassium": {
-        "label": "โพแทสเซียม (K+)",
-        "placeholder": "เช่น 4.2",
-        "unit": "mEq/L",
-    },
-    "alt": {
-        "label": "ALT (การทำงานของตับ)",
-        "placeholder": "เช่น 25",
-        "unit": "U/L",
-    },
-}
-
-LAB_STATUS_LABELS = {
-    "normal": {"text": "ปกติ", "css": "normal"},
-    "high": {"text": "สูงกว่าปกติ", "css": "high"},
-    "low": {"text": "ต่ำกว่าปกติ", "css": "low"},
-}
 
 
 # ไฟล์ต้นฉบับใบสั่งยาที่ระบบเก็บไว้เพื่อ Sync แบบ Real-time
@@ -717,135 +735,43 @@ def resolve_prolog_drug(name):
     return None
 
 
-def _prolog_query_pair(atom_a, atom_b):
-    """เรียก SWI-Prolog แยก process เพื่อไม่ให้ DLL ของ PySWIP ชนกับ Flask/openpyxl"""
-    if not os.path.exists(PROLOG_FILE):
-        raise FileNotFoundError(
-            "ไม่พบไฟล์ drug_interaction.pl ที่: {}".format(PROLOG_FILE)
-        )
-
+def _find_swipl():
     swipl = shutil.which("swipl")
+    if swipl:
+        return swipl
 
-    # ถ้าไม่ได้อยู่ใน PATH ให้ค้นหาตำแหน่งติดตั้ง SWI-Prolog ที่พบบ่อยบน Windows
-    if not swipl:
-        possible_paths = [
-            os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
-                         "swipl", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
-                         "SWI-Prolog", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
-                         "swipl", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
-                         "SWI-Prolog", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                         "swipl", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                         "SWI-Prolog", "bin", "swipl.exe"),
-        ]
-
-        for candidate in possible_paths:
-            if candidate and os.path.isfile(candidate):
-                swipl = candidate
-                break
-
-    if not swipl:
-        raise RuntimeError(
-            "ไม่พบ swipl.exe ของ SWI-Prolog "
-            "กรุณาติดตั้ง SWI-Prolog หรือแจ้งตำแหน่งที่ติดตั้ง"
-        )
-
-    # atom_a/atom_b มาจาก whitelist เท่านั้น จึงปลอดภัยที่จะนำไปสร้าง goal
-    # ให้ goal สำเร็จเสมอ แม้คู่นี้จะไม่มียาชนกัน
-    # ถ้า check_interaction/5 fail โดยตรง SWI-Prolog จะคืน returncode=1
-    # ทำให้ Python เข้าใจผิดว่าเป็น error
-    goal = (
-        "(check_interaction({}, {}, Risk, Severity, Warning) -> "
-        "format('FOUND\\t~w\\t~w\\t~w', [Risk, Severity, Warning]) ; "
-        "write('NONE')), halt(0)"
-    ).format(atom_a, atom_b)
-
-    print("=== SEND TO PROLOG ===")
-    print("Drug A:", atom_a)
-    print("Drug B:", atom_b)
-    print("Goal:", goal)
-
-    proc = subprocess.run(
-        [swipl, "-q", "-f", "none", "-s", PROLOG_FILE, "-g", goal],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
-        cwd=BASE_DIR,
-    )
-
-    print("=== PROLOG RESULT ===")
-    print("Return code:", proc.returncode)
-    print("stdout:", proc.stdout.strip())
-    print("stderr:", proc.stderr.strip())
-
-    if proc.returncode != 0:
-        err = proc.stderr.strip() or proc.stdout.strip() or "(ไม่มีข้อความจาก SWI-Prolog)"
-        raise RuntimeError(
-            "SWI-Prolog error while checking {} + {}: {}".format(
-                atom_a, atom_b, err
-            )
-        )
-
-    output = proc.stdout.strip()
-    if output == "NONE" or not output:
-        return None
-
-    parts = output.split("\t", 3)
-    if len(parts) != 4 or parts[0] != "FOUND":
-        return None
-
-    return {
-        "Risk": parts[1],
-        "Severity": parts[2],
-        "Warning": parts[3],
-    }
+    possible_paths = [
+        os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
+                     "swipl", "bin", "swipl.exe"),
+        os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
+                     "SWI-Prolog", "bin", "swipl.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
+                     "swipl", "bin", "swipl.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
+                     "SWI-Prolog", "bin", "swipl.exe"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                     "swipl", "bin", "swipl.exe"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                     "SWI-Prolog", "bin", "swipl.exe"),
+    ]
+    for candidate in possible_paths:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
 
 
 def _run_prolog_goal(goal, timeout=10):
-    """เรียก SWI-Prolog รันคำสั่ง goal ที่จบด้วย halt(0) แล้วคืน stdout (str) หรือ None ถ้า fail"""
     if not os.path.exists(PROLOG_FILE):
         raise FileNotFoundError(
             "ไม่พบไฟล์ drug_interaction.pl ที่: {}".format(PROLOG_FILE)
         )
 
-    swipl = shutil.which("swipl")
-
-    if not swipl:
-        possible_paths = [
-            os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
-                         "swipl", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
-                         "SWI-Prolog", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
-                         "swipl", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
-                         "SWI-Prolog", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                         "swipl", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                         "SWI-Prolog", "bin", "swipl.exe"),
-        ]
-        for candidate in possible_paths:
-            if candidate and os.path.isfile(candidate):
-                swipl = candidate
-                break
-
+    swipl = _find_swipl()
     if not swipl:
         raise RuntimeError(
             "ไม่พบ swipl.exe ของ SWI-Prolog "
             "กรุณาติดตั้ง SWI-Prolog หรือแจ้งตำแหน่งที่ติดตั้ง"
         )
-
-    print("=== LAB/PROLOG GOAL ===")
-    print("swipl path:", swipl)
-    print("Goal:", goal)
 
     proc = subprocess.run(
         [swipl, "-q", "-f", "none", "-s", PROLOG_FILE, "-g", goal],
@@ -858,175 +784,50 @@ def _run_prolog_goal(goal, timeout=10):
         cwd=BASE_DIR,
     )
 
-    print("=== LAB/PROLOG RESULT ===")
-    print("Return code:", proc.returncode)
-    print("stdout:", repr(proc.stdout.strip()))
-    print("stderr:", repr(proc.stderr.strip()))
-
     if proc.returncode != 0:
         err = proc.stderr.strip() or proc.stdout.strip() or "(ไม่มีข้อความจาก SWI-Prolog)"
-        raise RuntimeError("SWI-Prolog error: {}".format(err))
+        raise RuntimeError(err)
 
-    output = proc.stdout.strip()
-    if output == "NONE" or not output:
-        return None
-    return output
+    return (proc.stdout or "").strip()
 
 
-def _format_prolog_number(value):
-    """แปลงตัวเลข Python ให้เป็น literal ที่ SWI-Prolog อ่านได้ (ใช้ . เป็นทศนิยมเสมอ)"""
-    number = float(value)
-    if number.is_integer():
-        return repr(int(number))
-    return repr(number)
-
-
-_LAB_PREDICATES_OK = None  # cache: None=ยังไม่เช็ค, True/False=ผลเช็คล่าสุด
-
-
-def _ensure_lab_predicates_loaded():
-    """
-    เช็คว่า lab_status/4 ถูกโหลดเข้า swipl จริงหรือไม่ (แยกจากการ query ค่าจริง)
-    ถ้าไม่ถูกโหลด (เช่น ไฟล์ .pl พังตรงส่วนภาษาไทย/encoding) จะได้ error ที่บอกสาเหตุ
-    ชัดเจน แทนที่จะได้ผลลัพธ์ว่าง ๆ แบบเงียบ ๆ
-    """
-    global _LAB_PREDICATES_OK
-
-    if _LAB_PREDICATES_OK:
-        return
-
+def _prolog_query_pair(atom_a, atom_b):
+    """เรียก SWI-Prolog แยก process เพื่อไม่ให้ DLL ของ PySWIP ชนกับ Flask/openpyxl"""
     goal = (
-        "(current_predicate(lab_status/4) -> write('OK') ; write('MISSING')), "
-        "halt(0)"
-    )
+        "(check_interaction({}, {}, Risk, Severity, Warning) -> "
+        "format('FOUND\\t~w\\t~w\\t~w', [Risk, Severity, Warning]) ; "
+        "write('NONE')), halt(0)"
+    ).format(atom_a, atom_b)
+
+    print("=== SEND TO PROLOG ===")
+    print("Drug A:", atom_a)
+    print("Drug B:", atom_b)
+    print("Goal:", goal)
 
     try:
         output = _run_prolog_goal(goal)
-    except Exception as e:
-        _LAB_PREDICATES_OK = False
+    except Exception as exc:
         raise RuntimeError(
-            "เรียก SWI-Prolog เพื่อตรวจสอบไฟล์ drug_interaction.pl ไม่สำเร็จ: {}".format(e)
+            "SWI-Prolog error while checking {} + {}: {}".format(
+                atom_a, atom_b, exc
+            )
         )
 
-    if output == "OK":
-        _LAB_PREDICATES_OK = True
-        return
+    print("=== PROLOG RESULT ===")
+    print("stdout:", output)
 
-    _LAB_PREDICATES_OK = False
-    raise RuntimeError(
-        "ไฟล์ drug_interaction.pl โหลดไม่ครบ (ไม่พบ lab_status/4) "
-        "ส่วนใหญ่เกิดจากไฟล์มีปัญหาตอนอ่านช่วงที่เป็นภาษาไทย/สัญลักษณ์พิเศษ "
-        "กรุณาตรวจว่าไฟล์ .pl ขึ้นต้นด้วยบรรทัด ':- encoding(utf8).' จริง "
-        "และไม่มีเว้นบรรทัด/อักขระแปลกปลอมอยู่ก่อนบรรทัดนั้น"
-    )
-
-
-def query_lab_status(lab_key, value):
-    """เรียก lab_status/4 + lab_range/4 ใน drug_interaction.pl เพื่ออ่านผลแลป 1 ค่า"""
-    if lab_key not in LAB_DEFINITIONS:
+    if output == "NONE" or not output:
         return None
 
-    _ensure_lab_predicates_loaded()
-
-    value_literal = _format_prolog_number(value)
-
-    goal = (
-        "(lab_status({0}, {1}, Status, Desc), "
-        "lab_range({0}, Lo, Hi, Unit) -> "
-        "format('FOUND\\t~w\\t~w\\t~w\\t~w\\t~w', [Status, Desc, Lo, Hi, Unit]) ; "
-        "write('NONE')), halt(0)"
-    ).format(lab_key, value_literal)
-
-    output = _run_prolog_goal(goal)
-    if not output:
-        return None
-
-    parts = output.split("\t", 5)
-    if len(parts) != 6 or parts[0] != "FOUND":
+    parts = output.split("\t", 3)
+    if len(parts) != 4 or parts[0] != "FOUND":
         return None
 
     return {
-        "key": lab_key,
-        "value": value,
-        "status": parts[1],
-        "description": parts[2],
-        "normal_low": parts[3],
-        "normal_high": parts[4],
-        "unit": parts[5],
+        "Risk": parts[1],
+        "Severity": parts[2],
+        "Warning": parts[3],
     }
-
-
-def query_lab_adjustment(drug_atom, lab_key, value):
-    """เรียก check_lab_adjustment/5 เพื่อหาคำแนะนำปรับยาตามผลแลป (ถ้ามี)"""
-    value_literal = _format_prolog_number(value)
-
-    goal = (
-        "(check_lab_adjustment({0}, {1}, {2}, Severity, Rec) -> "
-        "format('FOUND\\t~w\\t~w', [Severity, Rec]) ; "
-        "write('NONE')), halt(0)"
-    ).format(drug_atom, lab_key, value_literal)
-
-    output = _run_prolog_goal(goal)
-    if not output:
-        return None
-
-    parts = output.split("\t", 2)
-    if len(parts) != 3 or parts[0] != "FOUND":
-        return None
-
-    return {
-        "severity": parts[1],
-        "recommendation": parts[2],
-    }
-
-
-def check_lab_values(lab_values, drug_names=None):
-    """
-    อ่านผลแลปหลายค่าพร้อมกัน (สูง/ต่ำ/ปกติ) และถ้ามีรายชื่อยาร่วมด้วย
-    จะตรวจคำแนะนำปรับยาตามผลแลปนั้นๆ ต่อให้อัตโนมัติ
-
-    lab_values: dict เช่น {"egfr": 75, "potassium": 5.8, "alt": 130}
-    drug_names: list ชื่อยา (ชื่อที่ผู้ใช้พิมพ์ จะถูก resolve เป็น atom เอง)
-    """
-    labs = []
-    for lab_key, raw_value in (lab_values or {}).items():
-        if raw_value in (None, ""):
-            continue
-        try:
-            numeric_value = float(raw_value)
-        except (TypeError, ValueError):
-            continue
-
-        result = query_lab_status(lab_key, numeric_value)
-        if result:
-            labs.append(result)
-
-    adjustments = []
-    resolved_drugs = []
-    for original_name in (drug_names or []):
-        atom = resolve_prolog_drug(original_name)
-        if atom:
-            resolved_drugs.append((str(original_name).strip(), atom))
-
-    for lab_result in labs:
-        if lab_result["status"] == "normal":
-            continue
-        for original_name, atom in resolved_drugs:
-            adjustment = query_lab_adjustment(
-                atom, lab_result["key"], lab_result["value"]
-            )
-            if adjustment:
-                adjustments.append({
-                    "drug": original_name,
-                    "lab_key": lab_result["key"],
-                    "lab_label": LAB_DEFINITIONS.get(lab_result["key"], {}).get(
-                        "label", lab_result["key"]
-                    ),
-                    "severity": adjustment["severity"],
-                    "recommendation": adjustment["recommendation"],
-                })
-
-    return {"labs": labs, "adjustments": adjustments}
 
 
 def check_drug_interactions(drug_names):
@@ -1065,6 +866,256 @@ def check_drug_interactions(drug_names):
                 })
 
     return results
+
+
+# ============================================================
+# LAB INTERPRETATION (อ่านกฎจาก drug_interaction.pl)
+# ============================================================
+
+def canonicalize_lab_key(name):
+    if name is None:
+        return None
+    key = str(name).strip().lower().replace(" ", "_")
+    key = key.replace("（", "(").replace("）", ")")
+    return LAB_KEY_ALIASES.get(key)
+
+
+def parse_numeric_lab(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return None
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except Exception:
+        return None
+
+
+def _fallback_lab_status(lab_key, value):
+    value = float(value)
+    if lab_key == "egfr":
+        if value >= 90:
+            return "normal", "การทำงานของไตปกติ"
+        if value >= 60:
+            return "low", "การทำงานของไตลดลงเล็กน้อย (CKD stage 2)"
+        if value >= 30:
+            return "low", "การทำงานของไตลดลงปานกลาง (CKD stage 3)"
+        if value >= 15:
+            return "low", "การทำงานของไตลดลงรุนแรง (CKD stage 4)"
+        return "low", "ไตวาย (CKD stage 5 / Kidney failure)"
+    if lab_key == "potassium":
+        if value > 6.0:
+            return "high", "โพแทสเซียมสูงรุนแรง (Severe hyperkalemia)"
+        if value > 5.5:
+            return "high", "โพแทสเซียมสูงปานกลาง (Moderate hyperkalemia)"
+        if value > 5.0:
+            return "high", "โพแทสเซียมสูงเล็กน้อย (Mild hyperkalemia)"
+        if value >= 3.5:
+            return "normal", "โพแทสเซียมปกติ"
+        if value >= 3.0:
+            return "low", "โพแทสเซียมต่ำเล็กน้อย (Mild hypokalemia)"
+        return "low", "โพแทสเซียมต่ำรุนแรง (Severe hypokalemia)"
+    if lab_key in ("alt", "ast"):
+        label = lab_key.upper()
+        if value > 200:
+            return "high", "{} สูงมาก (>5 เท่าของค่าปกติ)".format(label)
+        if value > 120:
+            return "high", "{} สูงปานกลาง (3-5 เท่าของค่าปกติ)".format(label)
+        if value > 40:
+            return "high", "{} สูงเล็กน้อย (1-3 เท่าของค่าปกติ)".format(label)
+        if value >= 0:
+            return "normal", "{} ปกติ".format(label)
+    if lab_key == "creatinine":
+        if value > 1.3:
+            return "high", "ครีเอตินินสูงชัดเจน อาจสะท้อนการทำงานของไตลดลง"
+        if value >= 0.6:
+            return "normal", "ครีเอตินินอยู่ในช่วงอ้างอิงทั่วไป"
+        return "low", "ครีเอตินินต่ำกว่าช่วงอ้างอิงทั่วไป"
+    if lab_key == "sodium":
+        if value > 145:
+            return "high", "โซเดียมสูง (Hypernatremia)"
+        if value >= 135:
+            return "normal", "โซเดียมปกติ"
+        return "low", "โซเดียมต่ำ (Hyponatremia)"
+    return None, None
+
+
+def query_lab_range(lab_key):
+    if lab_key not in LAB_RANGE_FALLBACK:
+        return None
+    goal = (
+        "(lab_range({}, Lo, Hi, Unit) -> "
+        "format('FOUND\\t~w\\t~w\\t~w', [Lo, Hi, Unit]) ; write('NONE')), halt(0)"
+    ).format(lab_key)
+    try:
+        output = _run_prolog_goal(goal)
+        if output and output.startswith("FOUND\t"):
+            parts = output.split("\t", 3)
+            if len(parts) == 4:
+                return float(parts[1]), float(parts[2]), parts[3]
+    except Exception as exc:
+        print("WARNING PROLOG lab_range:", repr(exc))
+    low, high, unit = LAB_RANGE_FALLBACK[lab_key]
+    return low, high, unit
+
+
+def query_lab_status(lab_key, value):
+    if lab_key not in LAB_RANGE_FALLBACK:
+        return None
+    try:
+        number = float(value)
+    except Exception:
+        return None
+
+    goal = (
+        "(lab_status({}, {}, Status, Desc) -> "
+        "format('FOUND\\t~w\\t~w', [Status, Desc]) ; write('NONE')), halt(0)"
+    ).format(lab_key, number)
+    try:
+        output = _run_prolog_goal(goal)
+        if output and output.startswith("FOUND\t"):
+            parts = output.split("\t", 2)
+            if len(parts) == 3:
+                status = str(parts[1]).strip().lower()
+                description = parts[2].strip()
+                if status in LAB_STATUS_TH:
+                    return status, description, "prolog"
+    except Exception as exc:
+        print("WARNING PROLOG lab_status:", repr(exc))
+
+    status, description = _fallback_lab_status(lab_key, number)
+    if not status:
+        return None
+    return status, description, "fallback"
+
+
+def query_lab_adjustments(drug_atom, lab_key, value):
+    if not drug_atom or lab_key not in LAB_RANGE_FALLBACK:
+        return []
+    try:
+        number = float(value)
+    except Exception:
+        return []
+
+    goal = (
+        "findall(Sev-Rec, check_lab_adjustment({}, {}, {}, Sev, Rec), L), "
+        "(L = [] -> write('NONE') ; "
+        "forall(member(Sev-Rec, L), format('FOUND\\t~w\\t~w\\n', [Sev, Rec]))), halt(0)"
+    ).format(drug_atom, lab_key, number)
+    items = []
+    try:
+        output = _run_prolog_goal(goal)
+        if output and output != "NONE":
+            for line in output.splitlines():
+                line = line.strip()
+                if not line.startswith("FOUND\t"):
+                    continue
+                parts = line.split("\t", 2)
+                if len(parts) == 3:
+                    items.append({
+                        "severity": parts[1].strip(),
+                        "recommendation": parts[2].strip(),
+                    })
+    except Exception as exc:
+        print("WARNING PROLOG lab_adjustment:", repr(exc))
+    return items
+
+
+def lab_meter_percent(value, low, high):
+    try:
+        value = float(value)
+        low = float(low)
+        high = float(high)
+    except Exception:
+        return 50
+    span = max(high - low, 0.0001)
+    padded_low = low - span * 0.35
+    padded_high = high + span * 0.35
+    if padded_high <= padded_low:
+        return 50
+    percent = (value - padded_low) / (padded_high - padded_low) * 100
+    return max(4, min(96, percent))
+
+
+def interpret_lab_value(lab_key, value):
+    lab_key = canonicalize_lab_key(lab_key) or lab_key
+    number = parse_numeric_lab(value)
+    if number is None or lab_key not in LAB_RANGE_FALLBACK:
+        return None
+
+    interpreted = query_lab_status(lab_key, number)
+    if not interpreted:
+        return None
+    status, description, source = interpreted
+    range_info = query_lab_range(lab_key)
+    low, high, unit = range_info if range_info else LAB_RANGE_FALLBACK[lab_key]
+    display_high = high if high < 900 else None
+
+    return {
+        "key": lab_key,
+        "label": LAB_LABELS.get(lab_key, lab_key),
+        "value": number,
+        "unit": unit,
+        "status": status,
+        "status_th": LAB_STATUS_TH.get(status, status),
+        "description": description,
+        "normal_low": low,
+        "normal_high": display_high if display_high is not None else high,
+        "normal_high_display": (
+            "≥ {:.0f}".format(low) if lab_key == "egfr" else
+            "{:g} – {:g}".format(low, high if high < 900 else high)
+        ),
+        "meter_percent": lab_meter_percent(number, low, high if high < 900 else low * 1.4),
+        "source": source,
+    }
+
+
+def apply_lab_interpretation(patient):
+    labs = patient.get("labs") or {}
+    results = []
+    seen = set()
+
+    for key, raw_value in labs.items():
+        lab_key = canonicalize_lab_key(key) or str(key).strip().lower()
+        if lab_key in seen:
+            continue
+        item = interpret_lab_value(lab_key, raw_value)
+        if item:
+            seen.add(lab_key)
+            results.append(item)
+
+    patient["lab_results"] = results
+
+    adjustments = []
+    medicines = patient.get("medicines") or []
+    for item in results:
+        for medicine in medicines:
+            atom = resolve_prolog_drug(medicine.get("name", ""))
+            if not atom:
+                continue
+            for advice in query_lab_adjustments(atom, item["key"], item["value"]):
+                adjustments.append({
+                    "drug": medicine.get("name", atom),
+                    "lab": item["label"],
+                    "lab_key": item["key"],
+                    "severity": advice["severity"],
+                    "recommendation": advice["recommendation"],
+                })
+
+    patient["lab_adjustments"] = adjustments
+    patient["lab_alert_count"] = sum(
+        1 for item in results if item.get("status") in ("high", "low")
+    )
+    return patient
 
 
 # ============================================================
@@ -1199,6 +1250,28 @@ def find_column(
             return normalized_headers[key]
 
 
+    return None
+
+
+def find_column_fuzzy(headers, keywords):
+    """หาคอลัมน์ที่ชื่อมีคำสำคัญ เช่น eGFR, K+, ALT"""
+    exact = find_column(headers, keywords)
+    if exact:
+        return exact
+
+    lowered_keywords = [
+        str(name).strip().lower()
+        for name in keywords
+        if name
+    ]
+
+    for header in headers:
+        if header is None:
+            continue
+        text = str(header).strip().lower()
+        for keyword in lowered_keywords:
+            if keyword and keyword in text:
+                return header
     return None
 
 
@@ -1814,6 +1887,27 @@ def read_prescription_excel(
         ]
     )
 
+    lab_columns = {
+        "egfr": find_column_fuzzy(headers, [
+            "eGFR", "egfr", "EGFR", "GFR", "ค่า eGFR"
+        ]),
+        "potassium": find_column(headers, [
+            "Potassium", "K+", "K", "potassium", "โพแทสเซียม", "Potassium (K+)"
+        ]),
+        "alt": find_column(headers, [
+            "ALT", "alt", "SGPT", "sgpt"
+        ]),
+        "ast": find_column(headers, [
+            "AST", "ast", "SGOT", "sgot"
+        ]),
+        "creatinine": find_column(headers, [
+            "Creatinine", "creatinine", "Cr", "SCr", "ครีเอตินิน"
+        ]),
+        "sodium": find_column(headers, [
+            "Sodium", "sodium", "Na+", "Na", "โซเดียม"
+        ]),
+    }
+
 
     if hn_col is None:
 
@@ -1965,7 +2059,9 @@ def read_prescription_excel(
 
                 "medicines": [],
 
-                "interaction_results": []
+                "interaction_results": [],
+
+                "labs": {}
 
             }
 
@@ -1998,6 +2094,17 @@ def read_prescription_excel(
                 appointment_date
             )
             patient["required_days"] = required_days
+
+        # ====================================================
+        # LABS (eGFR / K+ / ALT ...)
+        # ====================================================
+        labs = patients[hn].setdefault("labs", {})
+        for lab_key, column_name in lab_columns.items():
+            if not column_name:
+                continue
+            parsed = parse_numeric_lab(row_dict.get(column_name))
+            if parsed is not None:
+                labs[lab_key] = parsed
 
 
         # ====================================================
@@ -2188,6 +2295,7 @@ def read_prescription_excel(
         # คำนวณวันที่จ่าย -> วันนัดของ HN นี้ก่อนทุกครั้ง
         # เพื่อให้ตรวจสอบจำนวนยา/ช่วงวันของ HN นี้เสร็จก่อน
         patient = calculate_days_check(patient)
+        patient = apply_lab_interpretation(patient)
 
         # ====================================================
         # INTERACTION CHECK AFTER DAYS CHECK
@@ -3821,6 +3929,7 @@ def get_pending_patients():
         # คำนวณวันที่จ่าย -> วันนัดของ HN นี้ก่อนทุกครั้ง
         # เพื่อให้ตรวจสอบจำนวนยา/ช่วงวันของ HN นี้เสร็จก่อน
         patient = calculate_days_check(patient)
+        patient = apply_lab_interpretation(patient)
 
         # ====================================================
         # INTERACTION CHECK AFTER DAYS CHECK
@@ -3947,6 +4056,7 @@ def get_queue_patient(
     # ========================================================
     # ใช้ dispense_date / appointment_date ของ HN นี้โดยตรง
     patient = calculate_days_check(patient)
+    patient = apply_lab_interpretation(patient)
 
     # ========================================================
     # CHECK INTERACTION AFTER DAYS CHECK
@@ -5553,12 +5663,39 @@ def create_consult_pdf():
 
                         # คำนวณ Days Supply ใหม่จากข้อมูลของ HN นี้
                         queue_patient = calculate_days_check(queue_patient)
+                        queue_patient = apply_lab_interpretation(queue_patient)
 
                         # ใช้ข้อมูลจริงของผู้ป่วยแทนค่าที่ form ส่งมา
                         patient_name = str(queue_patient.get("name", "") or "").strip()
                         age = str(queue_patient.get("age", "") or "").strip()
                         dispense_date = str(queue_patient.get("dispense_date", "") or "").strip()
                         appointment_date = str(queue_patient.get("appointment_date", "") or "").strip()
+
+                        lab_lines = []
+                        for item in (queue_patient.get("lab_results") or []):
+                            lab_lines.append(
+                                "{} = {:g} {} → {} ({})".format(
+                                    item.get("label", ""),
+                                    item.get("value", 0),
+                                    item.get("unit", ""),
+                                    item.get("status_th", ""),
+                                    item.get("description", ""),
+                                )
+                            )
+                        if lab_lines:
+                            lab = " | ".join(lab_lines)
+                            for item in queue_patient.get("lab_results") or []:
+                                if item.get("key") == "egfr":
+                                    renal_function = "{} ({})".format(
+                                        item.get("description", ""),
+                                        item.get("status_th", ""),
+                                    )
+                                if item.get("key") in ("alt", "ast"):
+                                    hepatic_function = "{} ({})".format(
+                                        item.get("description", ""),
+                                        item.get("status_th", ""),
+                                    )
+
 
                         # ใช้รายการยาจริงทั้งหมดจาก patient_json
                         real_medicines = queue_patient.get("medicines", []) or []
@@ -6945,6 +7082,40 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
   </div>
 
   <div class="section">
+    <h3>🧪 ผลแลป (Lab Results)</h3>
+    {% if patient.lab_results %}
+      <table>
+        <thead><tr>
+          <th>รายการ</th><th>ค่าที่วัดได้</th><th>ช่วงปกติ</th><th>สถานะ</th><th>คำอธิบาย</th>
+        </tr></thead>
+        <tbody>
+        {% for l in patient.lab_results %}
+        <tr>
+          <td class="drug">{{ l.label }}</td>
+          <td><b>{{ l.value }}</b> {{ l.unit }}</td>
+          <td>{{ l.normal_high_display }} {{ l.unit }}</td>
+          <td class="{{ 'ok' if l.status == 'normal' else ('bad' if l.status == 'high' else 'warn') }}">
+            {% if l.status == 'normal' %}✓ ปกติ{% elif l.status == 'high' %}▲ สูง{% else %}▼ ต่ำ{% endif %}
+          </td>
+          <td style="text-align:left">{{ l.description }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if patient.lab_adjustments %}
+        {% for a in patient.lab_adjustments %}
+        <div class="interaction {{ 'bad' if a.severity in ['contraindicated','danger'] else 'warn' }}">
+          {% if a.severity in ['contraindicated','danger'] %}⛔{% else %}⚠️{% endif %}
+          <b>{{ a.drug }}</b> + {{ a.lab }} ({{ a.severity }})<br>{{ a.recommendation }}
+        </div>
+        {% endfor %}
+      {% endif %}
+    {% else %}
+      <div class="summary">ไม่มีข้อมูลผลแลปสำหรับผู้ป่วยรายนี้</div>
+    {% endif %}
+  </div>
+
+  <div class="section">
     <h3>⚕️ Drug Interaction</h3>
     {% if patient.interaction_results %}
       {% for x in patient.interaction_results %}
@@ -6983,6 +7154,7 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
 def _prepare_unified_result_patient(patient):
     """เตรียมข้อมูลสำหรับหน้าผลตรวจใหม่ โดยไม่เอา Stock เข้า Consult"""
     patient = calculate_days_check(patient)
+    patient = apply_lab_interpretation(patient)
     patient["interaction_results"] = check_patient_drug_interactions(patient)
 
     # FINAL INTERACTION FALLBACK: ตรวจจากชื่อยาของ HN โดยตรง
@@ -8248,299 +8420,108 @@ def interactions():
 
 
 # ============================================================
-# INTERACTION CHECK + LAB RESULT CHECK (หน้าเดียวกัน)
+# INTERACTION CHECK
 # ============================================================
-# ตรวจจำนวนยา / ยาชนกัน (drug interaction) และอ่านผลแลป (สูง/ต่ำ/ปกติ)
-# พร้อมคำแนะนำปรับยาตามผลแลป รวมอยู่ในหน้าเดียว ใช้รายชื่อยาชุดเดียวกัน
 
-INTERACTION_LAB_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="th">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ตรวจยาชนกัน + อ่านผลแลป | ระบบจัดการยา</title>
-<style>
-  :root{
-    --bg-1:#0f172a; --bg-2:#1e293b;
-    --card:#ffffff; --card-border:#e2e8f0;
-    --normal:#16a34a; --normal-bg:#dcfce7;
-    --high:#dc2626; --high-bg:#fee2e2;
-    --low:#d97706; --low-bg:#fef3c7;
-    --accent:#4f46e5; --accent2:#7c3aed;
-    --text:#0f172a; --muted:#64748b;
-  }
-  *{box-sizing:border-box;}
-  body{
-    margin:0; font-family:'Segoe UI',-apple-system,'Noto Sans Thai',sans-serif;
-    background:linear-gradient(135deg,var(--bg-1),var(--bg-2) 60%,#312e81);
-    min-height:100vh; padding:32px 16px; color:var(--text);
-  }
-  .wrap{max-width:960px;margin:0 auto;}
-  .top{color:#e2e8f0;margin-bottom:24px;}
-  .top a{color:#c7d2fe;text-decoration:none;font-size:14px;}
-  h1{color:#fff;font-size:28px;margin:8px 0 4px;}
-  .sub{color:#cbd5e1;font-size:14px;margin-bottom:24px;}
-  .card{
-    background:var(--card); border:1px solid var(--card-border);
-    border-radius:18px; padding:24px; box-shadow:0 20px 40px -20px rgba(0,0,0,.5);
-    margin-bottom:20px; animation:fadeUp .5s ease both;
-  }
-  @keyframes fadeUp{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;}
-  label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin-bottom:6px;}
-  textarea,input[type=text],input[type=number]{
-    width:100%;padding:12px 14px;border:1.5px solid #e2e8f0;border-radius:10px;
-    font-size:15px;font-family:inherit;transition:border-color .15s,box-shadow .15s;
-  }
-  textarea{min-height:64px;resize:vertical;}
-  input:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,70,229,.15);}
-  .unit{font-size:12px;color:var(--muted);margin-top:4px;}
-  .btn{
-    margin-top:20px; background:linear-gradient(135deg,var(--accent),var(--accent2));
-    color:#fff;border:none;padding:14px 28px;border-radius:12px;font-size:16px;font-weight:700;
-    cursor:pointer;transition:transform .15s,box-shadow .15s;
-  }
-  .btn:hover{transform:translateY(-2px);box-shadow:0 10px 20px -8px rgba(79,70,229,.6);}
-  .section-title{font-size:14px;font-weight:700;color:var(--muted);margin:0 0 12px;text-transform:uppercase;letter-spacing:.5px;}
-  .pill-count{
-    display:inline-block;background:#eef2ff;color:var(--accent);font-size:12px;font-weight:700;
-    padding:2px 10px;border-radius:999px;margin-left:8px;
-  }
-
-  /* --- Drug interaction results --- */
-  .int-card{
-    border-radius:14px;padding:16px 18px;margin-bottom:12px;border:1px solid #fecaca;
-    background:#fef2f2;animation:fadeUp .45s ease both;
-  }
-  .int-card.risk-d,.int-card.risk-c,.int-card.risk-dose_limit{border-color:#fde68a;background:#fffbeb;}
-  .int-pair{font-weight:700;font-size:15px;margin-bottom:4px;}
-  .int-tags{display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;}
-  .tag{font-size:11px;font-weight:700;text-transform:uppercase;padding:2px 8px;border-radius:6px;
-    background:#fff;border:1px solid currentColor;}
-  .tag.risk-x,.tag.risk-danger{color:var(--high);}
-  .tag.risk-d,.tag.risk-c,.tag.risk-dose_limit{color:var(--low);}
-  .int-text{font-size:14px;color:#334155;line-height:1.5;}
-
-  /* --- Lab results --- */
-  .lab-result{
-    border-radius:16px;padding:18px 20px;margin-bottom:14px;border:1px solid var(--card-border);
-    display:flex;flex-direction:column;gap:8px;animation:fadeUp .45s ease both;
-  }
-  .lab-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;}
-  .lab-name{font-weight:700;font-size:16px;}
-  .badge{padding:5px 14px;border-radius:999px;font-size:13px;font-weight:700;letter-spacing:.2px;}
-  .badge.normal{background:var(--normal-bg);color:var(--normal);}
-  .badge.high{background:var(--high-bg);color:var(--high);}
-  .badge.low{background:var(--low-bg);color:var(--low);}
-  .lab-value{font-size:22px;font-weight:800;}
-  .lab-desc{color:var(--muted);font-size:14px;}
-  .range-bar{position:relative;height:10px;border-radius:999px;background:#e2e8f0;margin-top:6px;overflow:hidden;}
-  .range-fill{position:absolute;top:0;bottom:0;border-radius:999px;transition:width .6s ease;}
-  .range-fill.normal{background:var(--normal);}
-  .range-fill.high{background:var(--high);}
-  .range-fill.low{background:var(--low);}
-  .range-labels{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px;}
-
-  /* --- Lab-based drug adjustment --- */
-  .adj-card{
-    border-radius:14px;padding:16px 18px;margin-bottom:12px;border:1px solid #fecaca;
-    background:#fff7f5;animation:fadeUp .45s ease both;
-  }
-  .adj-card.danger,.adj-card.contraindicated{border-color:#fca5a5;background:#fef2f2;}
-  .adj-card.caution{border-color:#fde68a;background:#fffbeb;}
-  .adj-drug{font-weight:700;font-size:15px;margin-bottom:4px;}
-  .adj-sev{display:inline-block;font-size:11px;font-weight:700;text-transform:uppercase;
-    padding:2px 8px;border-radius:6px;background:#fff;border:1px solid currentColor;margin-bottom:6px;}
-  .adj-text{font-size:14px;color:#334155;line-height:1.5;}
-
-  .empty{color:var(--muted);font-size:14px;text-align:center;padding:20px 0;}
-  .error{background:#fee2e2;color:#991b1b;padding:14px 18px;border-radius:12px;margin-bottom:16px;font-size:14px;}
-  .disclaimer{font-size:12px;color:#94a3b8;margin-top:18px;line-height:1.5;}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div class="top"><a href="/">&larr; กลับหน้าหลัก</a></div>
-  <h1>💊 ตรวจยาชนกัน + อ่านผลแลป</h1>
-  <div class="sub">กรอกรายชื่อยาและค่าแลป (ถ้ามี) ระบบจะตรวจ interaction ระหว่างยา อ่านผลแลป และแนะนำการปรับยาตามผลแลปให้ในหน้าเดียว</div>
-
-  {% if error %}
-  <div class="error">⚠️ {{ error }}</div>
-  {% endif %}
-
-  <form class="card" method="POST" action="/interaction-check">
-    <div class="section-title">รายชื่อยาที่ผู้ป่วยใช้อยู่</div>
-    <textarea name="drugs" placeholder="พิมพ์ชื่อยา คั่นด้วยเครื่องหมายจุลภาค &quot;,&quot; เช่น spironolactone, enalapril, simvastatin, amlodipine">{{ form_values.get('drugs', '') }}</textarea>
-    <div class="unit">ใส่ได้ตั้งแต่ 2 รายการขึ้นไปเพื่อตรวจว่ายาชนกันหรือไม่ (ระบบจะตรวจทุกคู่ที่เป็นไปได้)</div>
-
-    <div class="section-title" style="margin-top:22px;">ค่าแลป (ไม่บังคับ)</div>
-    <div class="grid">
-      {% for key, meta in lab_definitions.items() %}
-      <div>
-        <label>{{ meta.label }}</label>
-        <input type="number" step="any" name="lab_{{ key }}" placeholder="{{ meta.placeholder }}"
-               value="{{ form_values.get('lab_' + key, '') }}">
-        <div class="unit">หน่วย: {{ meta.unit }} — เว้นว่างได้ถ้าไม่มีผล</div>
-      </div>
-      {% endfor %}
-    </div>
-
-    <button class="btn" type="submit">ตรวจยา + อ่านผลแลป</button>
-  </form>
-
-  {% if submitted %}
-  <div class="card">
-    <div class="section-title">
-      ผลตรวจยาชนกัน (Drug Interaction)
-      {% if results %}<span class="pill-count">{{ results|length }} คู่ที่พบ</span>{% endif %}
-    </div>
-    {% if results %}
-      {% for r in results %}
-      <div class="int-card risk-{{ (r.Risk or '')|lower }}">
-        <div class="int-pair">{{ r.Drug_1 }} &harr; {{ r.Drug_2 }}</div>
-        <div class="int-tags">
-          <span class="tag risk-{{ (r.Risk or '')|lower }}">Risk {{ r.Risk }}</span>
-          <span class="tag risk-{{ (r.Risk or '')|lower }}">{{ r.Severity }}</span>
-        </div>
-        <div class="int-text">{{ r.Summary }}</div>
-      </div>
-      {% endfor %}
-    {% else %}
-      <div class="empty">ไม่พบยาชนกันจากรายชื่อที่กรอก (หรือยังไม่ได้กรอกยาอย่างน้อย 2 รายการ)</div>
-    {% endif %}
-  </div>
-
-  <div class="card">
-    <div class="section-title">ผลการอ่านค่าแลป</div>
-    {% if labs %}
-      {% for lab in labs %}
-      <div class="lab-result">
-        <div class="lab-head">
-          <div class="lab-name">{{ lab_definitions.get(lab.key, {}).get('label', lab.key) }}</div>
-          <span class="badge {{ lab.status }}">{{ status_labels.get(lab.status, {}).get('text', lab.status) }}</span>
-        </div>
-        <div class="lab-value">{{ lab.value }} <span style="font-size:14px;font-weight:500;color:var(--muted);">{{ lab.unit }}</span></div>
-        <div class="lab-desc">{{ lab.description }}</div>
-        <div class="range-bar">
-          <div class="range-fill {{ lab.status }}" style="width:{{ lab.bar_pct }}%;"></div>
-        </div>
-        <div class="range-labels"><span>ค่าปกติ: {{ lab.normal_low }} – {{ lab.normal_high }} {{ lab.unit }}</span></div>
-      </div>
-      {% endfor %}
-    {% else %}
-      <div class="empty">ยังไม่มีผลแลปที่อ่านได้ ลองกรอกค่าอย่างน้อย 1 รายการด้านบน</div>
-    {% endif %}
-  </div>
-
-  <div class="card">
-    <div class="section-title">คำแนะนำปรับยาตามผลแลป</div>
-    {% if adjustments %}
-      {% for adj in adjustments %}
-      <div class="adj-card {{ adj.severity }}">
-        <div class="adj-sev">{{ adj.severity }}</div>
-        <div class="adj-drug">{{ adj.drug }} &times; {{ adj.lab_label }}</div>
-        <div class="adj-text">{{ adj.recommendation }}</div>
-      </div>
-      {% endfor %}
-    {% else %}
-      <div class="empty">ไม่พบคำแนะนำปรับยาสำหรับค่าที่กรอก (ต้องใส่ทั้งยาและค่าแลปที่เกี่ยวข้องจึงจะประเมินได้)</div>
-    {% endif %}
-  </div>
-  {% endif %}
-
-  <div class="disclaimer">
-    ⚠️ ผลจากหน้านี้เป็นการอ้างอิง threshold และฐานข้อมูล interaction เบื้องต้นเพื่อความปลอดภัยเท่านั้น
-    ไม่ใช่คำวินิจฉัยทางการแพทย์ โปรดให้เภสัชกร/แพทย์ตรวจทานก่อนใช้ตัดสินใจทางคลินิกจริง
-  </div>
-</div>
-</body>
-</html>
-"""
-
-
-def _lab_bar_percent(lab_result):
-    """คำนวณตำแหน่ง % บนแถบสำหรับแสดงผล (0-100) โดยเทียบกับช่วงปกติ"""
-    try:
-        low = float(lab_result["normal_low"])
-        high = float(lab_result["normal_high"])
-        value = float(lab_result["value"])
-    except (TypeError, ValueError):
-        return 50
-
-    if high <= low:
-        return 50
-
-    span = high - low
-    padded_low = low - span * 0.5
-    padded_high = high + span * 0.5
-    padded_span = padded_high - padded_low
-    if padded_span <= 0:
-        return 50
-
-    pct = (value - padded_low) / padded_span * 100
-    return max(2, min(98, round(pct, 1)))
-
-
-@app.route("/interaction-check", methods=["GET", "POST"])
+@app.route(
+    "/interaction-check",
+    methods=["GET", "POST"]
+)
 def interaction_check():
 
     results = []
-    labs = []
-    adjustments = []
-    error = None
-    form_values = {}
-    submitted = False
+
+    drug1 = ""
+
+    drug2 = ""
+
 
     if request.method == "POST":
-        submitted = True
-        form_values = request.form.to_dict()
 
-        drugs_raw = request.form.get("drugs", "")
-        drug_names = [
-            name.strip()
-            for name in drugs_raw.replace("\n", ",").split(",")
-            if name.strip()
-        ]
+        drug1 = request.form.get(
+            "drug1",
+            ""
+        )
 
-        lab_values = {}
-        for key in LAB_DEFINITIONS:
-            raw = request.form.get("lab_{}".format(key), "").strip()
-            if raw:
-                lab_values[key] = raw
 
-        try:
-            results = check_drug_interactions(drug_names)
-        except Exception as e:
-            error = "ไม่สามารถตรวจยาชนกันได้: {}".format(e)
+        drug2 = request.form.get(
+            "drug2",
+            ""
+        )
 
-        try:
-            lab_result = check_lab_values(lab_values, drug_names)
-            labs = lab_result["labs"]
-            for lab in labs:
-                lab["bar_pct"] = _lab_bar_percent(lab)
-            adjustments = lab_result["adjustments"]
-        except Exception as e:
-            lab_error = "ไม่สามารถอ่านผลแลปได้: {}".format(e)
-            error = "{} ; {}".format(error, lab_error) if error else lab_error
 
-    return render_template_string(
-        INTERACTION_LAB_TEMPLATE,
+        results = check_drug_interactions(
+            [
+                drug1,
+                drug2
+            ]
+        )
+
+
+    return render_template(
+        "interaction_check.html",
         results=results,
-        labs=labs,
-        adjustments=adjustments,
-        lab_definitions=LAB_DEFINITIONS,
-        status_labels=LAB_STATUS_LABELS,
-        error=error,
-        form_values=form_values,
-        submitted=submitted,
+        drug1=drug1,
+        drug2=drug2
     )
 
 
+# ============================================================
+# LAB CHECK (อ่านผลจาก Prolog)
+# ============================================================
+
 @app.route("/lab-check", methods=["GET", "POST"])
 def lab_check():
-    """คงเส้นทางเดิมไว้เพื่อ backward-compat — ฟีเจอร์อ่านผลแลปย้ายไปรวมกับ /interaction-check แล้ว"""
-    return redirect(url_for("interaction_check"))
+    results = []
+    form_values = {key: "" for key in LAB_LABELS}
+    error = None
+    source_note = None
+
+    if request.method == "POST":
+        for key in LAB_LABELS:
+            raw = request.form.get(key, "")
+            form_values[key] = raw
+            parsed = parse_numeric_lab(raw)
+            if parsed is None:
+                continue
+            item = interpret_lab_value(key, parsed)
+            if item:
+                results.append(item)
+
+        if not results:
+            error = "กรุณากรอกค่าแลปอย่างน้อย 1 รายการ เป็นตัวเลข"
+
+        sources = {item.get("source") for item in results}
+        if "prolog" in sources:
+            source_note = "แปลผลด้วยกฎในไฟล์ Prolog (drug_interaction.pl)"
+        elif results:
+            source_note = "แปลผลด้วยกฎสำรองที่สอดคล้องกับ Prolog เพราะยังเรียก SWI-Prolog ไม่ได้"
+
+    return render_template(
+        "lab_check.html",
+        results=results,
+        form_values=form_values,
+        error=error,
+        source_note=source_note,
+        lab_fields=[
+            {"key": key, "label": label, "unit": LAB_RANGE_FALLBACK[key][2]}
+            for key, label in LAB_LABELS.items()
+        ],
+    )
+
+
+@app.route("/api/lab-status", methods=["POST"])
+def api_lab_status():
+    payload = request.get_json(silent=True) or {}
+    lab_key = canonicalize_lab_key(payload.get("key"))
+    value = parse_numeric_lab(payload.get("value"))
+    if not lab_key or value is None:
+        return jsonify({"ok": False, "error": "ข้อมูลไม่ครบ"}), 400
+    item = interpret_lab_value(lab_key, value)
+    if not item:
+        return jsonify({"ok": False, "error": "แปลผลไม่ได้"}), 400
+    return jsonify({"ok": True, "result": item})
+
 
 # ============================================================
 # APPOINTMENT
