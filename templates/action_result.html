@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <title>{{ title }}</title>
+
+    <style>
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f7fb;
+            margin: 0;
+            padding: 50px;
+        }
+
+        .card {
+            max-width: 650px;
+            margin: auto;
+            background: white;
+            padding: 40px;
+            border-radius: 18px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+
+        .success {
+            font-size: 60px;
+        }
+
+        .error {
+            font-size: 60px;
+        }
+
+        a {
+            display: inline-block;
+            margin-top: 25px;
+            padding: 12px 20px;
+            background: #555;
+            color: white;
+            text-decoration: none;
+            border-radius: 10px;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+<div class="card">
+
+    {% if success %}
+
+        <div class="success">
+            ✅
+        </div>
+
+    {% else %}
+
+        <div class="error">
+            ❌
+        </div>
+
+    {% endif %}
+
+
+    <h1>
+        {{ title }}
+    </h1>
+
+
+    <p>
+        {{ message }}
+    </p>
+
+
+    <a href="/prescription">
+        ← กลับไปหน้าตรวจใบสั่งยา
+    </a>
+
+
+    <br>
+
+
+    <a href="/history">
+        📋 ดูประวัติ
+    </a>
+
+</div>
+
+</body>
+
+</html>
