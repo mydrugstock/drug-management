@@ -770,8 +770,7 @@ def _prolog_query_pair(atom_a, atom_b):
     print("Goal:", goal)
 
     proc = subprocess.run(
-        [swipl, "-q", "-f", "none", "--encoding=utf8",
-         "-s", PROLOG_FILE, "-g", goal],
+        [swipl, "-q", "-f", "none", "-s", PROLOG_FILE, "-g", goal],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -849,8 +848,7 @@ def _run_prolog_goal(goal, timeout=10):
     print("Goal:", goal)
 
     proc = subprocess.run(
-        [swipl, "-q", "-f", "none", "--encoding=utf8",
-         "-s", PROLOG_FILE, "-g", goal],
+        [swipl, "-q", "-f", "none", "-s", PROLOG_FILE, "-g", goal],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -883,10 +881,52 @@ def _format_prolog_number(value):
     return repr(number)
 
 
+_LAB_PREDICATES_OK = None  # cache: None=ยังไม่เช็ค, True/False=ผลเช็คล่าสุด
+
+
+def _ensure_lab_predicates_loaded():
+    """
+    เช็คว่า lab_status/4 ถูกโหลดเข้า swipl จริงหรือไม่ (แยกจากการ query ค่าจริง)
+    ถ้าไม่ถูกโหลด (เช่น ไฟล์ .pl พังตรงส่วนภาษาไทย/encoding) จะได้ error ที่บอกสาเหตุ
+    ชัดเจน แทนที่จะได้ผลลัพธ์ว่าง ๆ แบบเงียบ ๆ
+    """
+    global _LAB_PREDICATES_OK
+
+    if _LAB_PREDICATES_OK:
+        return
+
+    goal = (
+        "(current_predicate(lab_status/4) -> write('OK') ; write('MISSING')), "
+        "halt(0)"
+    )
+
+    try:
+        output = _run_prolog_goal(goal)
+    except Exception as e:
+        _LAB_PREDICATES_OK = False
+        raise RuntimeError(
+            "เรียก SWI-Prolog เพื่อตรวจสอบไฟล์ drug_interaction.pl ไม่สำเร็จ: {}".format(e)
+        )
+
+    if output == "OK":
+        _LAB_PREDICATES_OK = True
+        return
+
+    _LAB_PREDICATES_OK = False
+    raise RuntimeError(
+        "ไฟล์ drug_interaction.pl โหลดไม่ครบ (ไม่พบ lab_status/4) "
+        "ส่วนใหญ่เกิดจากไฟล์มีปัญหาตอนอ่านช่วงที่เป็นภาษาไทย/สัญลักษณ์พิเศษ "
+        "กรุณาตรวจว่าไฟล์ .pl ขึ้นต้นด้วยบรรทัด ':- encoding(utf8).' จริง "
+        "และไม่มีเว้นบรรทัด/อักขระแปลกปลอมอยู่ก่อนบรรทัดนั้น"
+    )
+
+
 def query_lab_status(lab_key, value):
     """เรียก lab_status/4 + lab_range/4 ใน drug_interaction.pl เพื่ออ่านผลแลป 1 ค่า"""
     if lab_key not in LAB_DEFINITIONS:
         return None
+
+    _ensure_lab_predicates_loaded()
 
     value_literal = _format_prolog_number(value)
 
