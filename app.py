@@ -40,6 +40,7 @@ import sqlite3
 import json
 import shutil
 import subprocess
+import re
 
 from datetime import datetime, date
 
@@ -93,6 +94,51 @@ INTERACTION_FILE_FALLBACK = os.path.join(
 # ไม่โหลด PySWIP เข้า process ของ Flask เพื่อไม่ให้กระทบ openpyxl/Excel
 # ============================================================
 PROLOG_FILE = os.path.join(BASE_DIR, "drug_interaction.pl")
+
+LAB_KEY_ALIASES = {
+    "egfr": "egfr",
+    "gfr": "egfr",
+    "egfr_ml": "egfr",
+    "potassium": "potassium",
+    "k": "potassium",
+    "k+": "potassium",
+    "k_plus": "potassium",
+    "alt": "alt",
+    "sgpt": "alt",
+    "ast": "ast",
+    "sgot": "ast",
+    "creatinine": "creatinine",
+    "cr": "creatinine",
+    "scr": "creatinine",
+    "sodium": "sodium",
+    "na": "sodium",
+    "na+": "sodium",
+}
+
+LAB_LABELS = {
+    "egfr": "eGFR (การทำงานของไต)",
+    "potassium": "โพแทสเซียม (K+)",
+    "alt": "ALT (เอนไซม์ตับ)",
+    "ast": "AST (เอนไซม์ตับ)",
+    "creatinine": "ครีเอตินิน (Creatinine)",
+    "sodium": "โซเดียม (Na+)",
+}
+
+LAB_STATUS_TH = {
+    "normal": "ปกติ",
+    "high": "สูง",
+    "low": "ต่ำ",
+}
+
+# ค่าสำรองเมื่อเรียก SWI-Prolog ไม่ได้ ต้องสอดคล้องกับ drug_interaction.pl
+LAB_RANGE_FALLBACK = {
+    "egfr": (90.0, 999.0, "ml/min/1.73m2"),
+    "potassium": (3.5, 5.0, "mEq/L"),
+    "alt": (0.0, 40.0, "U/L"),
+    "ast": (0.0, 40.0, "U/L"),
+    "creatinine": (0.6, 1.3, "mg/dL"),
+    "sodium": (135.0, 145.0, "mEq/L"),
+}
 
 PROLOG_DRUG_ATOMS = {
     "amiloride+hydrochlorothiazide": "amiloride_hydrochlorothiazide",
@@ -689,47 +735,64 @@ def resolve_prolog_drug(name):
     return None
 
 
-def _prolog_query_pair(atom_a, atom_b):
-    """เรียก SWI-Prolog แยก process เพื่อไม่ให้ DLL ของ PySWIP ชนกับ Flask/openpyxl"""
+def _find_swipl():
+    swipl = shutil.which("swipl")
+    if swipl:
+        return swipl
+
+    possible_paths = [
+        os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
+                     "swipl", "bin", "swipl.exe"),
+        os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
+                     "SWI-Prolog", "bin", "swipl.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
+                     "swipl", "bin", "swipl.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
+                     "SWI-Prolog", "bin", "swipl.exe"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                     "swipl", "bin", "swipl.exe"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                     "SWI-Prolog", "bin", "swipl.exe"),
+    ]
+    for candidate in possible_paths:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _run_prolog_goal(goal, timeout=10):
     if not os.path.exists(PROLOG_FILE):
         raise FileNotFoundError(
             "ไม่พบไฟล์ drug_interaction.pl ที่: {}".format(PROLOG_FILE)
         )
 
-    swipl = shutil.which("swipl")
-
-    # ถ้าไม่ได้อยู่ใน PATH ให้ค้นหาตำแหน่งติดตั้ง SWI-Prolog ที่พบบ่อยบน Windows
-    if not swipl:
-        possible_paths = [
-            os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
-                         "swipl", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
-                         "SWI-Prolog", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
-                         "swipl", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
-                         "SWI-Prolog", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                         "swipl", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                         "SWI-Prolog", "bin", "swipl.exe"),
-        ]
-
-        for candidate in possible_paths:
-            if candidate and os.path.isfile(candidate):
-                swipl = candidate
-                break
-
+    swipl = _find_swipl()
     if not swipl:
         raise RuntimeError(
             "ไม่พบ swipl.exe ของ SWI-Prolog "
             "กรุณาติดตั้ง SWI-Prolog หรือแจ้งตำแหน่งที่ติดตั้ง"
         )
 
-    # atom_a/atom_b มาจาก whitelist เท่านั้น จึงปลอดภัยที่จะนำไปสร้าง goal
-    # ให้ goal สำเร็จเสมอ แม้คู่นี้จะไม่มียาชนกัน
-    # ถ้า check_interaction/5 fail โดยตรง SWI-Prolog จะคืน returncode=1
-    # ทำให้ Python เข้าใจผิดว่าเป็น error
+    proc = subprocess.run(
+        [swipl, "-q", "-f", "none", "-s", PROLOG_FILE, "-g", goal],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        cwd=BASE_DIR,
+    )
+
+    if proc.returncode != 0:
+        err = proc.stderr.strip() or proc.stdout.strip() or "(ไม่มีข้อความจาก SWI-Prolog)"
+        raise RuntimeError(err)
+
+    return (proc.stdout or "").strip()
+
+
+def _prolog_query_pair(atom_a, atom_b):
+    """เรียก SWI-Prolog แยก process เพื่อไม่ให้ DLL ของ PySWIP ชนกับ Flask/openpyxl"""
     goal = (
         "(check_interaction({}, {}, Risk, Severity, Warning) -> "
         "format('FOUND\\t~w\\t~w\\t~w', [Risk, Severity, Warning]) ; "
@@ -741,31 +804,18 @@ def _prolog_query_pair(atom_a, atom_b):
     print("Drug B:", atom_b)
     print("Goal:", goal)
 
-    proc = subprocess.run(
-        [swipl, "-q", "-f", "none", "-s", PROLOG_FILE, "-g", goal],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
-        cwd=BASE_DIR,
-    )
-
-    print("=== PROLOG RESULT ===")
-    print("Return code:", proc.returncode)
-    print("stdout:", proc.stdout.strip())
-    print("stderr:", proc.stderr.strip())
-
-    if proc.returncode != 0:
-        err = proc.stderr.strip() or proc.stdout.strip() or "(ไม่มีข้อความจาก SWI-Prolog)"
+    try:
+        output = _run_prolog_goal(goal)
+    except Exception as exc:
         raise RuntimeError(
             "SWI-Prolog error while checking {} + {}: {}".format(
-                atom_a, atom_b, err
+                atom_a, atom_b, exc
             )
         )
 
-    output = proc.stdout.strip()
+    print("=== PROLOG RESULT ===")
+    print("stdout:", output)
+
     if output == "NONE" or not output:
         return None
 
@@ -816,6 +866,256 @@ def check_drug_interactions(drug_names):
                 })
 
     return results
+
+
+# ============================================================
+# LAB INTERPRETATION (อ่านกฎจาก drug_interaction.pl)
+# ============================================================
+
+def canonicalize_lab_key(name):
+    if name is None:
+        return None
+    key = str(name).strip().lower().replace(" ", "_")
+    key = key.replace("（", "(").replace("）", ")")
+    return LAB_KEY_ALIASES.get(key)
+
+
+def parse_numeric_lab(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return None
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except Exception:
+        return None
+
+
+def _fallback_lab_status(lab_key, value):
+    value = float(value)
+    if lab_key == "egfr":
+        if value >= 90:
+            return "normal", "การทำงานของไตปกติ"
+        if value >= 60:
+            return "low", "การทำงานของไตลดลงเล็กน้อย (CKD stage 2)"
+        if value >= 30:
+            return "low", "การทำงานของไตลดลงปานกลาง (CKD stage 3)"
+        if value >= 15:
+            return "low", "การทำงานของไตลดลงรุนแรง (CKD stage 4)"
+        return "low", "ไตวาย (CKD stage 5 / Kidney failure)"
+    if lab_key == "potassium":
+        if value > 6.0:
+            return "high", "โพแทสเซียมสูงรุนแรง (Severe hyperkalemia)"
+        if value > 5.5:
+            return "high", "โพแทสเซียมสูงปานกลาง (Moderate hyperkalemia)"
+        if value > 5.0:
+            return "high", "โพแทสเซียมสูงเล็กน้อย (Mild hyperkalemia)"
+        if value >= 3.5:
+            return "normal", "โพแทสเซียมปกติ"
+        if value >= 3.0:
+            return "low", "โพแทสเซียมต่ำเล็กน้อย (Mild hypokalemia)"
+        return "low", "โพแทสเซียมต่ำรุนแรง (Severe hypokalemia)"
+    if lab_key in ("alt", "ast"):
+        label = lab_key.upper()
+        if value > 200:
+            return "high", "{} สูงมาก (>5 เท่าของค่าปกติ)".format(label)
+        if value > 120:
+            return "high", "{} สูงปานกลาง (3-5 เท่าของค่าปกติ)".format(label)
+        if value > 40:
+            return "high", "{} สูงเล็กน้อย (1-3 เท่าของค่าปกติ)".format(label)
+        if value >= 0:
+            return "normal", "{} ปกติ".format(label)
+    if lab_key == "creatinine":
+        if value > 1.3:
+            return "high", "ครีเอตินินสูงชัดเจน อาจสะท้อนการทำงานของไตลดลง"
+        if value >= 0.6:
+            return "normal", "ครีเอตินินอยู่ในช่วงอ้างอิงทั่วไป"
+        return "low", "ครีเอตินินต่ำกว่าช่วงอ้างอิงทั่วไป"
+    if lab_key == "sodium":
+        if value > 145:
+            return "high", "โซเดียมสูง (Hypernatremia)"
+        if value >= 135:
+            return "normal", "โซเดียมปกติ"
+        return "low", "โซเดียมต่ำ (Hyponatremia)"
+    return None, None
+
+
+def query_lab_range(lab_key):
+    if lab_key not in LAB_RANGE_FALLBACK:
+        return None
+    goal = (
+        "(lab_range({}, Lo, Hi, Unit) -> "
+        "format('FOUND\\t~w\\t~w\\t~w', [Lo, Hi, Unit]) ; write('NONE')), halt(0)"
+    ).format(lab_key)
+    try:
+        output = _run_prolog_goal(goal)
+        if output and output.startswith("FOUND\t"):
+            parts = output.split("\t", 3)
+            if len(parts) == 4:
+                return float(parts[1]), float(parts[2]), parts[3]
+    except Exception as exc:
+        print("WARNING PROLOG lab_range:", repr(exc))
+    low, high, unit = LAB_RANGE_FALLBACK[lab_key]
+    return low, high, unit
+
+
+def query_lab_status(lab_key, value):
+    if lab_key not in LAB_RANGE_FALLBACK:
+        return None
+    try:
+        number = float(value)
+    except Exception:
+        return None
+
+    goal = (
+        "(lab_status({}, {}, Status, Desc) -> "
+        "format('FOUND\\t~w\\t~w', [Status, Desc]) ; write('NONE')), halt(0)"
+    ).format(lab_key, number)
+    try:
+        output = _run_prolog_goal(goal)
+        if output and output.startswith("FOUND\t"):
+            parts = output.split("\t", 2)
+            if len(parts) == 3:
+                status = str(parts[1]).strip().lower()
+                description = parts[2].strip()
+                if status in LAB_STATUS_TH:
+                    return status, description, "prolog"
+    except Exception as exc:
+        print("WARNING PROLOG lab_status:", repr(exc))
+
+    status, description = _fallback_lab_status(lab_key, number)
+    if not status:
+        return None
+    return status, description, "fallback"
+
+
+def query_lab_adjustments(drug_atom, lab_key, value):
+    if not drug_atom or lab_key not in LAB_RANGE_FALLBACK:
+        return []
+    try:
+        number = float(value)
+    except Exception:
+        return []
+
+    goal = (
+        "findall(Sev-Rec, check_lab_adjustment({}, {}, {}, Sev, Rec), L), "
+        "(L = [] -> write('NONE') ; "
+        "forall(member(Sev-Rec, L), format('FOUND\\t~w\\t~w\\n', [Sev, Rec]))), halt(0)"
+    ).format(drug_atom, lab_key, number)
+    items = []
+    try:
+        output = _run_prolog_goal(goal)
+        if output and output != "NONE":
+            for line in output.splitlines():
+                line = line.strip()
+                if not line.startswith("FOUND\t"):
+                    continue
+                parts = line.split("\t", 2)
+                if len(parts) == 3:
+                    items.append({
+                        "severity": parts[1].strip(),
+                        "recommendation": parts[2].strip(),
+                    })
+    except Exception as exc:
+        print("WARNING PROLOG lab_adjustment:", repr(exc))
+    return items
+
+
+def lab_meter_percent(value, low, high):
+    try:
+        value = float(value)
+        low = float(low)
+        high = float(high)
+    except Exception:
+        return 50
+    span = max(high - low, 0.0001)
+    padded_low = low - span * 0.35
+    padded_high = high + span * 0.35
+    if padded_high <= padded_low:
+        return 50
+    percent = (value - padded_low) / (padded_high - padded_low) * 100
+    return max(4, min(96, percent))
+
+
+def interpret_lab_value(lab_key, value):
+    lab_key = canonicalize_lab_key(lab_key) or lab_key
+    number = parse_numeric_lab(value)
+    if number is None or lab_key not in LAB_RANGE_FALLBACK:
+        return None
+
+    interpreted = query_lab_status(lab_key, number)
+    if not interpreted:
+        return None
+    status, description, source = interpreted
+    range_info = query_lab_range(lab_key)
+    low, high, unit = range_info if range_info else LAB_RANGE_FALLBACK[lab_key]
+    display_high = high if high < 900 else None
+
+    return {
+        "key": lab_key,
+        "label": LAB_LABELS.get(lab_key, lab_key),
+        "value": number,
+        "unit": unit,
+        "status": status,
+        "status_th": LAB_STATUS_TH.get(status, status),
+        "description": description,
+        "normal_low": low,
+        "normal_high": display_high if display_high is not None else high,
+        "normal_high_display": (
+            "≥ {:.0f}".format(low) if lab_key == "egfr" else
+            "{:g} – {:g}".format(low, high if high < 900 else high)
+        ),
+        "meter_percent": lab_meter_percent(number, low, high if high < 900 else low * 1.4),
+        "source": source,
+    }
+
+
+def apply_lab_interpretation(patient):
+    labs = patient.get("labs") or {}
+    results = []
+    seen = set()
+
+    for key, raw_value in labs.items():
+        lab_key = canonicalize_lab_key(key) or str(key).strip().lower()
+        if lab_key in seen:
+            continue
+        item = interpret_lab_value(lab_key, raw_value)
+        if item:
+            seen.add(lab_key)
+            results.append(item)
+
+    patient["lab_results"] = results
+
+    adjustments = []
+    medicines = patient.get("medicines") or []
+    for item in results:
+        for medicine in medicines:
+            atom = resolve_prolog_drug(medicine.get("name", ""))
+            if not atom:
+                continue
+            for advice in query_lab_adjustments(atom, item["key"], item["value"]):
+                adjustments.append({
+                    "drug": medicine.get("name", atom),
+                    "lab": item["label"],
+                    "lab_key": item["key"],
+                    "severity": advice["severity"],
+                    "recommendation": advice["recommendation"],
+                })
+
+    patient["lab_adjustments"] = adjustments
+    patient["lab_alert_count"] = sum(
+        1 for item in results if item.get("status") in ("high", "low")
+    )
+    return patient
 
 
 # ============================================================
@@ -950,6 +1250,28 @@ def find_column(
             return normalized_headers[key]
 
 
+    return None
+
+
+def find_column_fuzzy(headers, keywords):
+    """หาคอลัมน์ที่ชื่อมีคำสำคัญ เช่น eGFR, K+, ALT"""
+    exact = find_column(headers, keywords)
+    if exact:
+        return exact
+
+    lowered_keywords = [
+        str(name).strip().lower()
+        for name in keywords
+        if name
+    ]
+
+    for header in headers:
+        if header is None:
+            continue
+        text = str(header).strip().lower()
+        for keyword in lowered_keywords:
+            if keyword and keyword in text:
+                return header
     return None
 
 
@@ -1565,6 +1887,27 @@ def read_prescription_excel(
         ]
     )
 
+    lab_columns = {
+        "egfr": find_column_fuzzy(headers, [
+            "eGFR", "egfr", "EGFR", "GFR", "ค่า eGFR"
+        ]),
+        "potassium": find_column(headers, [
+            "Potassium", "K+", "K", "potassium", "โพแทสเซียม", "Potassium (K+)"
+        ]),
+        "alt": find_column(headers, [
+            "ALT", "alt", "SGPT", "sgpt"
+        ]),
+        "ast": find_column(headers, [
+            "AST", "ast", "SGOT", "sgot"
+        ]),
+        "creatinine": find_column(headers, [
+            "Creatinine", "creatinine", "Cr", "SCr", "ครีเอตินิน"
+        ]),
+        "sodium": find_column(headers, [
+            "Sodium", "sodium", "Na+", "Na", "โซเดียม"
+        ]),
+    }
+
 
     if hn_col is None:
 
@@ -1716,7 +2059,9 @@ def read_prescription_excel(
 
                 "medicines": [],
 
-                "interaction_results": []
+                "interaction_results": [],
+
+                "labs": {}
 
             }
 
@@ -1749,6 +2094,17 @@ def read_prescription_excel(
                 appointment_date
             )
             patient["required_days"] = required_days
+
+        # ====================================================
+        # LABS (eGFR / K+ / ALT ...)
+        # ====================================================
+        labs = patients[hn].setdefault("labs", {})
+        for lab_key, column_name in lab_columns.items():
+            if not column_name:
+                continue
+            parsed = parse_numeric_lab(row_dict.get(column_name))
+            if parsed is not None:
+                labs[lab_key] = parsed
 
 
         # ====================================================
@@ -1939,6 +2295,7 @@ def read_prescription_excel(
         # คำนวณวันที่จ่าย -> วันนัดของ HN นี้ก่อนทุกครั้ง
         # เพื่อให้ตรวจสอบจำนวนยา/ช่วงวันของ HN นี้เสร็จก่อน
         patient = calculate_days_check(patient)
+        patient = apply_lab_interpretation(patient)
 
         # ====================================================
         # INTERACTION CHECK AFTER DAYS CHECK
@@ -3572,6 +3929,7 @@ def get_pending_patients():
         # คำนวณวันที่จ่าย -> วันนัดของ HN นี้ก่อนทุกครั้ง
         # เพื่อให้ตรวจสอบจำนวนยา/ช่วงวันของ HN นี้เสร็จก่อน
         patient = calculate_days_check(patient)
+        patient = apply_lab_interpretation(patient)
 
         # ====================================================
         # INTERACTION CHECK AFTER DAYS CHECK
@@ -3698,6 +4056,7 @@ def get_queue_patient(
     # ========================================================
     # ใช้ dispense_date / appointment_date ของ HN นี้โดยตรง
     patient = calculate_days_check(patient)
+    patient = apply_lab_interpretation(patient)
 
     # ========================================================
     # CHECK INTERACTION AFTER DAYS CHECK
@@ -5304,12 +5663,39 @@ def create_consult_pdf():
 
                         # คำนวณ Days Supply ใหม่จากข้อมูลของ HN นี้
                         queue_patient = calculate_days_check(queue_patient)
+                        queue_patient = apply_lab_interpretation(queue_patient)
 
                         # ใช้ข้อมูลจริงของผู้ป่วยแทนค่าที่ form ส่งมา
                         patient_name = str(queue_patient.get("name", "") or "").strip()
                         age = str(queue_patient.get("age", "") or "").strip()
                         dispense_date = str(queue_patient.get("dispense_date", "") or "").strip()
                         appointment_date = str(queue_patient.get("appointment_date", "") or "").strip()
+
+                        lab_lines = []
+                        for item in (queue_patient.get("lab_results") or []):
+                            lab_lines.append(
+                                "{} = {:g} {} → {} ({})".format(
+                                    item.get("label", ""),
+                                    item.get("value", 0),
+                                    item.get("unit", ""),
+                                    item.get("status_th", ""),
+                                    item.get("description", ""),
+                                )
+                            )
+                        if lab_lines:
+                            lab = " | ".join(lab_lines)
+                            for item in queue_patient.get("lab_results") or []:
+                                if item.get("key") == "egfr":
+                                    renal_function = "{} ({})".format(
+                                        item.get("description", ""),
+                                        item.get("status_th", ""),
+                                    )
+                                if item.get("key") in ("alt", "ast"):
+                                    hepatic_function = "{} ({})".format(
+                                        item.get("description", ""),
+                                        item.get("status_th", ""),
+                                    )
+
 
                         # ใช้รายการยาจริงทั้งหมดจาก patient_json
                         real_medicines = queue_patient.get("medicines", []) or []
@@ -6696,6 +7082,40 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
   </div>
 
   <div class="section">
+    <h3>🧪 ผลแลป (Lab Results)</h3>
+    {% if patient.lab_results %}
+      <table>
+        <thead><tr>
+          <th>รายการ</th><th>ค่าที่วัดได้</th><th>ช่วงปกติ</th><th>สถานะ</th><th>คำอธิบาย</th>
+        </tr></thead>
+        <tbody>
+        {% for l in patient.lab_results %}
+        <tr>
+          <td class="drug">{{ l.label }}</td>
+          <td><b>{{ l.value }}</b> {{ l.unit }}</td>
+          <td>{{ l.normal_high_display }} {{ l.unit }}</td>
+          <td class="{{ 'ok' if l.status == 'normal' else ('bad' if l.status == 'high' else 'warn') }}">
+            {% if l.status == 'normal' %}✓ ปกติ{% elif l.status == 'high' %}▲ สูง{% else %}▼ ต่ำ{% endif %}
+          </td>
+          <td style="text-align:left">{{ l.description }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if patient.lab_adjustments %}
+        {% for a in patient.lab_adjustments %}
+        <div class="interaction {{ 'bad' if a.severity in ['contraindicated','danger'] else 'warn' }}">
+          {% if a.severity in ['contraindicated','danger'] %}⛔{% else %}⚠️{% endif %}
+          <b>{{ a.drug }}</b> + {{ a.lab }} ({{ a.severity }})<br>{{ a.recommendation }}
+        </div>
+        {% endfor %}
+      {% endif %}
+    {% else %}
+      <div class="summary">ไม่มีข้อมูลผลแลปสำหรับผู้ป่วยรายนี้</div>
+    {% endif %}
+  </div>
+
+  <div class="section">
     <h3>⚕️ Drug Interaction</h3>
     {% if patient.interaction_results %}
       {% for x in patient.interaction_results %}
@@ -6734,6 +7154,7 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
 def _prepare_unified_result_patient(patient):
     """เตรียมข้อมูลสำหรับหน้าผลตรวจใหม่ โดยไม่เอา Stock เข้า Consult"""
     patient = calculate_days_check(patient)
+    patient = apply_lab_interpretation(patient)
     patient["interaction_results"] = check_patient_drug_interactions(patient)
 
     # FINAL INTERACTION FALLBACK: ตรวจจากชื่อยาของ HN โดยตรง
@@ -6802,9 +7223,13 @@ def _prepare_unified_result_patient(patient):
 )
 def prescription_result():
     patients = get_pending_patients()
-    patients = [_prepare_unified_result_patient(p) for p in patients]
-    return render_template_string(
-        UNIFIED_RESULT_TEMPLATE,
+    patients = [
+        _prepare_unified_result_patient(patient)
+        for patient in patients
+    ]
+
+    return render_template(
+        "prescription_result.html",
         patients=patients,
         error=request.args.get("error", "")
     )
@@ -8043,6 +8468,63 @@ def interaction_check():
         drug1=drug1,
         drug2=drug2
     )
+
+
+# ============================================================
+# LAB CHECK (อ่านผลจาก Prolog)
+# ============================================================
+
+@app.route("/lab-check", methods=["GET", "POST"])
+def lab_check():
+    results = []
+    form_values = {key: "" for key in LAB_LABELS}
+    error = None
+    source_note = None
+
+    if request.method == "POST":
+        for key in LAB_LABELS:
+            raw = request.form.get(key, "")
+            form_values[key] = raw
+            parsed = parse_numeric_lab(raw)
+            if parsed is None:
+                continue
+            item = interpret_lab_value(key, parsed)
+            if item:
+                results.append(item)
+
+        if not results:
+            error = "กรุณากรอกค่าแลปอย่างน้อย 1 รายการ เป็นตัวเลข"
+
+        sources = {item.get("source") for item in results}
+        if "prolog" in sources:
+            source_note = "แปลผลด้วยกฎในไฟล์ Prolog (drug_interaction.pl)"
+        elif results:
+            source_note = "แปลผลด้วยกฎสำรองที่สอดคล้องกับ Prolog เพราะยังเรียก SWI-Prolog ไม่ได้"
+
+    return render_template(
+        "lab_check.html",
+        results=results,
+        form_values=form_values,
+        error=error,
+        source_note=source_note,
+        lab_fields=[
+            {"key": key, "label": label, "unit": LAB_RANGE_FALLBACK[key][2]}
+            for key, label in LAB_LABELS.items()
+        ],
+    )
+
+
+@app.route("/api/lab-status", methods=["POST"])
+def api_lab_status():
+    payload = request.get_json(silent=True) or {}
+    lab_key = canonicalize_lab_key(payload.get("key"))
+    value = parse_numeric_lab(payload.get("value"))
+    if not lab_key or value is None:
+        return jsonify({"ok": False, "error": "ข้อมูลไม่ครบ"}), 400
+    item = interpret_lab_value(lab_key, value)
+    if not item:
+        return jsonify({"ok": False, "error": "แปลผลไม่ได้"}), 400
+    return jsonify({"ok": True, "result": item})
 
 
 # ============================================================
