@@ -689,13 +689,56 @@ def resolve_prolog_drug(name):
     return None
 
 
-def _prolog_query_pair(atom_a, atom_b):
-    """เรียก SWI-Prolog แยก process เพื่อไม่ให้ DLL ของ PySWIP ชนกับ Flask/openpyxl"""
-    if not os.path.exists(PROLOG_FILE):
-        raise FileNotFoundError(
-            "ไม่พบไฟล์ drug_interaction.pl ที่: {}".format(PROLOG_FILE)
-        )
+# ============================================================
+# CHECK LAB RESULTS (lab_status ใน .pl)
+# ============================================================
+# ชื่อคอลัมน์ผลแลปในไฟล์ Excel อาจตั้งไม่ตรงกับ atom ใน drug_interaction.pl
+# เช่น "eGFR", "GFR", "Creatinine", "Cr", "K+" จึงต้อง map ชื่อคอลัมน์ ->
+# atom มาตรฐานก่อนส่งไปถาม Prolog คอลัมน์ไหนไม่ตรงกับรายการนี้เลย จะแสดง
+# แค่ค่าดิบโดยไม่มีสถานะสูง/ต่ำ/ปกติกำกับ (ไม่ทำให้ระบบ error)
 
+LAB_ATOM_ALIASES = {
+    "egfr": "egfr",
+    "gfr": "egfr",
+    "potassium": "potassium",
+    "k": "potassium",
+    "alt": "alt",
+    "sgpt": "alt",
+    "ast": "ast",
+    "sgot": "ast",
+    "creatinine": "creatinine",
+    "cr": "creatinine",
+    "scr": "creatinine",
+    "sodium": "sodium",
+    "na": "sodium",
+}
+
+
+def normalize_lab_name(name):
+    if name is None:
+        return ""
+    name = str(name).strip().lower()
+    cleaned = [ch for ch in name if ch.isalnum()]
+    return "".join(cleaned)
+
+
+def resolve_lab_atom(header):
+    """map ชื่อคอลัมน์แล็บ (ตามที่พบในไฟล์ Excel) -> atom มาตรฐานใน .pl หรือ None ถ้าไม่รู้จัก"""
+    normalized = normalize_lab_name(header)
+    if not normalized:
+        return None
+    return LAB_ATOM_ALIASES.get(normalized)
+
+
+# Cache ผลลัพธ์การเช็คคู่ยา key = frozenset({atom_a, atom_b})
+# กฎ interaction ใน drug_interaction.pl ไม่เปลี่ยนระหว่าง server รันอยู่
+# จึงเช็คคู่เดิมครั้งเดียวพอ ลดการเปิด subprocess swipl ซ้ำๆ ทุกครั้งที่หน้า
+# /prescription-result หรือหน้าอื่นถูกโหลด/รีเฟรชสำหรับคนไข้หลายคนที่ใช้ยาซ้ำกัน
+_PROLOG_INTERACTION_CACHE = {}
+
+
+def _locate_swipl():
+    """หา path ของ swipl.exe/binary — ใช้ร่วมกันทั้ง interaction check และ lab check"""
     swipl = shutil.which("swipl")
 
     # ถ้าไม่ได้อยู่ใน PATH ให้ค้นหาตำแหน่งติดตั้ง SWI-Prolog ที่พบบ่อยบน Windows
@@ -725,6 +768,22 @@ def _prolog_query_pair(atom_a, atom_b):
             "ไม่พบ swipl.exe ของ SWI-Prolog "
             "กรุณาติดตั้ง SWI-Prolog หรือแจ้งตำแหน่งที่ติดตั้ง"
         )
+
+    return swipl
+
+
+def _prolog_query_pair(atom_a, atom_b):
+    """เรียก SWI-Prolog แยก process เพื่อไม่ให้ DLL ของ PySWIP ชนกับ Flask/openpyxl"""
+    cache_key = frozenset((atom_a, atom_b))
+    if cache_key in _PROLOG_INTERACTION_CACHE:
+        return _PROLOG_INTERACTION_CACHE[cache_key]
+
+    if not os.path.exists(PROLOG_FILE):
+        raise FileNotFoundError(
+            "ไม่พบไฟล์ drug_interaction.pl ที่: {}".format(PROLOG_FILE)
+        )
+
+    swipl = _locate_swipl()
 
     # atom_a/atom_b มาจาก whitelist เท่านั้น จึงปลอดภัยที่จะนำไปสร้าง goal
     # ให้ goal สำเร็จเสมอ แม้คู่นี้จะไม่มียาชนกัน
@@ -767,17 +826,21 @@ def _prolog_query_pair(atom_a, atom_b):
 
     output = proc.stdout.strip()
     if output == "NONE" or not output:
+        _PROLOG_INTERACTION_CACHE[cache_key] = None
         return None
 
     parts = output.split("\t", 3)
     if len(parts) != 4 or parts[0] != "FOUND":
+        _PROLOG_INTERACTION_CACHE[cache_key] = None
         return None
 
-    return {
+    result = {
         "Risk": parts[1],
         "Severity": parts[2],
         "Warning": parts[3],
     }
+    _PROLOG_INTERACTION_CACHE[cache_key] = result
+    return result
 
 
 def check_drug_interactions(drug_names):
@@ -816,6 +879,140 @@ def check_drug_interactions(drug_names):
                 })
 
     return results
+
+
+# ============================================================
+# LAB STATUS (สูง/ต่ำ/ปกติ) ผ่าน lab_status/4 ใน .pl
+# ============================================================
+
+def _format_prolog_number(value):
+    """แปลงค่าตัวเลข (จากผลแลปที่เป็น str) ให้เป็น literal ตัวเลขของ Prolog
+    คืน None ถ้าแปลงเป็นตัวเลขไม่ได้ (กันไม่ให้ยิง goal ด้วยค่าที่ไม่ปลอดภัย)"""
+    try:
+        cleaned = str(value).replace(",", "").strip()
+        numeric = float(cleaned)
+    except (TypeError, ValueError):
+        return None
+
+    if numeric.is_integer():
+        return str(int(numeric))
+    return repr(numeric)
+
+
+# Cache: key = (lab_atom, value_str) -> {'Status', 'Description'} | None
+_PROLOG_LAB_STATUS_CACHE = {}
+
+
+def _prolog_lab_status(lab_atom, value):
+    """เรียก lab_status/4 ใน .pl หาว่าค่าแล็บนี้ สูง/ต่ำ/ปกติ"""
+    value_str = _format_prolog_number(value)
+    if value_str is None:
+        return None
+
+    cache_key = (lab_atom, value_str)
+    if cache_key in _PROLOG_LAB_STATUS_CACHE:
+        return _PROLOG_LAB_STATUS_CACHE[cache_key]
+
+    if not os.path.exists(PROLOG_FILE):
+        raise FileNotFoundError(
+            "ไม่พบไฟล์ drug_interaction.pl ที่: {}".format(PROLOG_FILE)
+        )
+
+    swipl = _locate_swipl()
+
+    # lab_atom มาจาก LAB_ATOM_ALIASES (whitelist) เท่านั้น และ value_str
+    # ผ่าน _format_prolog_number มาแล้ว จึงปลอดภัยที่จะนำไปสร้าง goal
+    goal = (
+        "(lab_status({}, {}, Status, Description) -> "
+        "format('FOUND\\t~w\\t~w', [Status, Description]) ; "
+        "write('NONE')), halt(0)"
+    ).format(lab_atom, value_str)
+
+    print("=== SEND TO PROLOG (LAB STATUS) ===")
+    print("Lab:", lab_atom)
+    print("Value:", value_str)
+    print("Goal:", goal)
+
+    proc = subprocess.run(
+        [swipl, "-q", "-f", "none", "-s", PROLOG_FILE, "-g", goal],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+        cwd=BASE_DIR,
+    )
+
+    print("=== PROLOG RESULT (LAB STATUS) ===")
+    print("Return code:", proc.returncode)
+    print("stdout:", proc.stdout.strip())
+    print("stderr:", proc.stderr.strip())
+
+    if proc.returncode != 0:
+        err = proc.stderr.strip() or proc.stdout.strip() or "(ไม่มีข้อความจาก SWI-Prolog)"
+        raise RuntimeError(
+            "SWI-Prolog error while checking lab status {}={}: {}".format(
+                lab_atom, value_str, err
+            )
+        )
+
+    output = proc.stdout.strip()
+    if output == "NONE" or not output:
+        _PROLOG_LAB_STATUS_CACHE[cache_key] = None
+        return None
+
+    parts = output.split("\t", 2)
+    if len(parts) != 3 or parts[0] != "FOUND":
+        _PROLOG_LAB_STATUS_CACHE[cache_key] = None
+        return None
+
+    result = {
+        "Status": parts[1],
+        "Description": parts[2],
+    }
+    _PROLOG_LAB_STATUS_CACHE[cache_key] = result
+    return result
+
+
+def check_patient_lab_results(patient):
+    """
+    ตรวจสถานะผลแลป (สูง/ต่ำ/ปกติ) ของคนไข้ทุกค่าที่ map เข้ากับ atom ใน .pl ได้
+
+    หมายเหตุ: ไม่แสดง "คำแนะนำปรับยา" (lab_adjustment) เพราะเป็นการให้คำแนะนำ
+    เชิงคลินิกที่อยู่นอกขอบเขตสิทธิ์ของเภสัชกร/เจ้าหน้าที่จ่ายยาในระบบนี้
+    ระบบจึงบอกแค่สถานะของค่าแล็บ ส่วนการตัดสินใจปรับยาให้เป็นดุลยพินิจแพทย์
+
+    คืนค่า lab_statuses โดยใช้ header เดิมของคอลัมน์ Excel เป็น key
+    เพื่อให้ template จับคู่กับ patient.labs ได้ตรงกัน
+    """
+    labs = patient.get("labs", {}) or {}
+    lab_statuses = []
+
+    if not labs:
+        return lab_statuses
+
+    for header, raw_value in labs.items():
+        lab_atom = resolve_lab_atom(header)
+        if not lab_atom:
+            continue
+
+        try:
+            status_data = _prolog_lab_status(lab_atom, raw_value)
+        except Exception as e:
+            print("ERROR LAB STATUS:", repr(e))
+            continue
+
+        if status_data:
+            lab_statuses.append({
+                "header": header,
+                "lab": lab_atom,
+                "value": raw_value,
+                "status": status_data["Status"],
+                "description": status_data["Description"],
+            })
+
+    return lab_statuses
 
 
 # ============================================================
@@ -1574,6 +1771,27 @@ def read_prescription_excel(
             "ไม่พบ column HN ในไฟล์ Excel"
         )
 
+    # ========================================================
+    # LAB RESULT COLUMNS
+    # ========================================================
+    # คอลัมน์ใดก็ตามในไฟล์ที่ไม่ใช่คอลัมน์มาตรฐานด้านบน (HN/ชื่อ/อายุ/ยา/
+    # ขนาดยา/ครั้งต่อวัน/จำนวน/วันที่จ่าย/วันนัด) จะถือว่าเป็นค่าผลแลป
+    # เช่น Creatinine, eGFR, Potassium, FBS, HbA1c ฯลฯ โดยไม่ต้องผูกชื่อ
+    # คอลัมน์ตายตัว เพราะแต่ละไฟล์อาจตั้งชื่อคอลัมน์แล็บไม่เหมือนกัน
+
+    _known_columns = {
+        c for c in [
+            hn_col, name_col, age_col, drug_col, strength_col,
+            times_col, quantity_col, dispense_col, appointment_col
+        ] if c
+    }
+
+    lab_columns = [
+        header for header in headers
+        if header is not None
+        and str(header).strip() != ""
+        and header not in _known_columns
+    ]
 
     # ========================================================
     # READ DATA
@@ -1716,7 +1934,9 @@ def read_prescription_excel(
 
                 "medicines": [],
 
-                "interaction_results": []
+                "interaction_results": [],
+
+                "labs": {}
 
             }
 
@@ -1749,6 +1969,30 @@ def read_prescription_excel(
                 appointment_date
             )
             patient["required_days"] = required_days
+
+
+        # ====================================================
+        # LAB RESULTS (ค่าผลแลป)
+        # ====================================================
+        # ค่าแล็บเป็นข้อมูลระดับคนไข้ ไม่ใช่ระดับยา จึงเก็บครั้งเดียวต่อ HN
+        # ถ้าแถวถัดไปของ HN เดียวกันมีค่าที่ไม่ว่างกว่าค่าที่เคยเก็บไว้ ให้อัปเดตทับ
+
+        patients[hn].setdefault("labs", {})
+
+        for lab_header in lab_columns:
+
+            lab_value = row_dict.get(lab_header)
+
+            if lab_value is None:
+                continue
+
+            lab_value_str = str(lab_value).strip()
+
+            if not lab_value_str:
+                continue
+
+            if not str(patients[hn]["labs"].get(lab_header, "")).strip():
+                patients[hn]["labs"][lab_header] = lab_value_str
 
 
         # ====================================================
@@ -6643,6 +6887,32 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
     <div>📆 จำนวนวันที่ต้องใช้<b>{{ patient.required_days }} วัน</b></div>
   </div>
 
+  {% if patient.labs %}
+  <div class="section">
+    <h3>🧪 ผลแลป</h3>
+    <table>
+      <thead><tr><th>รายการ</th><th>ค่า</th><th>สถานะ</th></tr></thead>
+      <tbody>
+      {% for lab_name, lab_value in patient.labs.items() %}
+      {% set s = patient.lab_status_by_header.get(lab_name) if patient.lab_status_by_header else none %}
+      <tr>
+        <td class="drug">{{ lab_name }}</td>
+        <td>{{ lab_value }}</td>
+        <td class="{{ 'bad' if s and s.status in ['high', 'low'] else ('ok' if s else '') }}">
+          {% if s %}
+            {% if s.status == 'high' %}🔺 สูง{% elif s.status == 'low' %}🔻 ต่ำ{% else %}✓ ปกติ{% endif %}
+            — {{ s.description }}
+          {% else %}
+            -
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
   <div class="section">
     <h3>💊 รายการยา</h3>
     <table>
@@ -6749,6 +7019,15 @@ def _prepare_unified_result_patient(patient):
 
     patient = apply_stock_to_patient(patient)
     patient["stock_sufficient"] = patient_stock_is_sufficient(patient)
+
+    # ผลแลป: สถานะ (สูง/ต่ำ/ปกติ) ต่อค่าแล็บ — แสดงสถานะเฉยๆ ไม่มีคำแนะนำปรับยา
+    # (อยู่นอกขอบเขตสิทธิ์ของเภสัชกร/เจ้าหน้าที่จ่ายยา) เป็นข้อมูลแสดงผลอย่างเดียว
+    # ไม่กระทบ logic การอนุมัติ/จ่ายยาเดิม
+    lab_statuses = check_patient_lab_results(patient)
+    patient["lab_statuses"] = lab_statuses
+    patient["lab_status_by_header"] = {
+        item["header"]: item for item in lab_statuses
+    }
 
     # สร้าง Consult PDF ใบเดียวเมื่อมี Days Supply หรือ Drug Interaction
     # (ไม่รวม Stock ใน Consult)
