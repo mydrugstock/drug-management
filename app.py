@@ -792,8 +792,17 @@ def _run_prolog_goal(goal, timeout=10):
     return (proc.stdout or "").strip()
 
 
-def _prolog_query_pair(atom_a, atom_b):
-    """เรียก SWI-Prolog แยก process เพื่อไม่ให้ DLL ของ PySWIP ชนกับ Flask/openpyxl"""
+@functools.lru_cache(maxsize=None)
+def _prolog_query_pair_cached(atom_a, atom_b):
+    """
+    ผลของ check_interaction/5 เป็น "ข้อเท็จจริงคงที่" จากไฟล์
+    drug_interaction.pl (ไม่ขึ้นกับผู้ป่วยคนไหนเลย) จึง cache ไว้ใน
+    หน่วยความจำ เพราะคู่ยาเดิมมักถูกถามซ้ำหลายรอบ (คนละผู้ป่วยที่ใช้
+    ยาชุดเดียวกัน / หน้าเว็บรีเฟรชอัตโนมัติทุก 3 วินาที) เดิมแต่ละครั้ง
+    ต้องเปิดโปรเซส SWI-Prolog ใหม่ทั้งที่คำตอบเหมือนเดิมทุกครั้ง
+    หมายเหตุ: atom_a, atom_b ต้องถูกเรียงลำดับ (sorted) มาก่อนแล้ว
+    จากผู้เรียก เพื่อให้ cache key ไม่ซ้ำซ้อนตามลำดับที่สลับกัน
+    """
     goal = (
         "(check_interaction({}, {}, Risk, Severity, Warning) -> "
         "format('FOUND\\t~w\\t~w\\t~w', [Risk, Severity, Warning]) ; "
@@ -829,6 +838,13 @@ def _prolog_query_pair(atom_a, atom_b):
         "Severity": parts[2],
         "Warning": parts[3],
     }
+
+
+def _prolog_query_pair(atom_a, atom_b):
+    """เรียก SWI-Prolog แยก process เพื่อไม่ให้ DLL ของ PySWIP ชนกับ
+    Flask/openpyxl -- ผลลัพธ์ถูก cache ไว้ต่อคู่ยา (ไม่สนลำดับ)"""
+    a, b = sorted((str(atom_a), str(atom_b)))
+    return _prolog_query_pair_cached(a, b)
 
 
 def check_drug_interactions(drug_names):
@@ -3886,6 +3902,9 @@ def apply_stock_to_patient(
 # SYNC PRESCRIPTION QUEUE FROM EXCEL
 # ============================================================
 
+_SYNC_EXCEL_CACHE = {"signature": None}
+
+
 def sync_prescription_queue_from_excel():
     """
     Sync Excel -> Queue โดยใช้ HN เป็นตัวหลัก
@@ -3895,6 +3914,23 @@ def sync_prescription_queue_from_excel():
     """
     if not os.path.exists(PRESCRIPTION_SOURCE_FILE):
         return False
+
+    # ----------------------------------------------------------
+    # หน้าผลตรวจเรียก endpoint นี้ทุก 3 วินาที (ผ่าน /prescription-live)
+    # เพื่อเช็คว่าไฟล์ Excel เปลี่ยนหรือไม่ ถ้าไฟล์ยังเหมือนเดิม (mtime +
+    # ขนาดไม่เปลี่ยน) ก็ไม่จำเป็นต้องเปิด/อ่าน/parse ไฟล์ Excel ใหม่ซ้ำ ๆ
+    # ----------------------------------------------------------
+    try:
+        stat = os.stat(PRESCRIPTION_SOURCE_FILE)
+        current_signature = (stat.st_mtime_ns, stat.st_size)
+    except Exception:
+        current_signature = None
+
+    if (
+        current_signature is not None
+        and current_signature == _SYNC_EXCEL_CACHE.get("signature")
+    ):
+        return True
 
     try:
         excel_patients = read_prescription_excel(PRESCRIPTION_SOURCE_FILE)
@@ -4005,6 +4041,7 @@ def sync_prescription_queue_from_excel():
                 ))
 
             conn.commit()
+            _SYNC_EXCEL_CACHE["signature"] = current_signature
             return True
         finally:
             conn.close()
