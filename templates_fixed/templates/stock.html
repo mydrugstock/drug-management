@@ -1,0 +1,1722 @@
+```html
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Stock ยา | Medication Management System</title>
+
+
+    <!-- ======================================================
+         STYLE
+    ======================================================= -->
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+
+        body {
+
+            margin: 0;
+
+            font-family:
+                "Segoe UI",
+                Tahoma,
+                Arial,
+                sans-serif;
+
+            background:
+                #f5f7fb;
+
+            color:
+                #1f2937;
+        }
+
+
+        /* ==================================================
+           NAVBAR
+        ================================================== */
+
+        .navbar {
+
+            width: 100%;
+
+            background:
+                #ffffff;
+
+            border-bottom:
+                1px solid #e5e7eb;
+
+            padding:
+                14px 30px;
+
+            display:
+                flex;
+
+            align-items:
+                center;
+
+            justify-content:
+                space-between;
+
+            position:
+                sticky;
+
+            top: 0;
+
+            z-index: 100;
+        }
+
+
+        .brand {
+
+            font-size:
+                20px;
+
+            font-weight:
+                700;
+
+            color:
+                #2563eb;
+
+            text-decoration:
+                none;
+        }
+
+
+        .nav-links {
+
+            display:
+                flex;
+
+            gap:
+                8px;
+
+            flex-wrap:
+                wrap;
+        }
+
+
+        .nav-links a {
+
+            text-decoration:
+                none;
+
+            color:
+                #4b5563;
+
+            padding:
+                8px 12px;
+
+            border-radius:
+                8px;
+
+            font-size:
+                14px;
+        }
+
+
+        .nav-links a:hover {
+
+            background:
+                #eff6ff;
+
+            color:
+                #2563eb;
+        }
+
+
+        .nav-links a.active {
+
+            background:
+                #2563eb;
+
+            color:
+                white;
+        }
+
+
+        /* ==================================================
+           MAIN
+        ================================================== */
+
+        .container {
+
+            max-width:
+                1400px;
+
+            margin:
+                0 auto;
+
+            padding:
+                30px 20px 50px;
+        }
+
+
+        .page-header {
+
+            margin-bottom:
+                24px;
+        }
+
+
+        .page-header h1 {
+
+            margin:
+                0 0 8px;
+
+            font-size:
+                30px;
+
+            color:
+                #111827;
+        }
+
+
+        .page-header p {
+
+            margin:
+                0;
+
+            color:
+                #6b7280;
+
+            font-size:
+                15px;
+        }
+
+
+        /* ==================================================
+           ALERT
+        ================================================== */
+
+        .alert {
+
+            padding:
+                14px 18px;
+
+            border-radius:
+                10px;
+
+            margin-bottom:
+                20px;
+
+            font-size:
+                14px;
+
+            line-height:
+                1.6;
+        }
+
+
+        .alert-success {
+
+            background:
+                #ecfdf5;
+
+            border:
+                1px solid #a7f3d0;
+
+            color:
+                #065f46;
+        }
+
+
+        .alert-error {
+
+            background:
+                #fef2f2;
+
+            border:
+                1px solid #fecaca;
+
+            color:
+                #991b1b;
+        }
+
+
+        /* ==================================================
+           UPLOAD CARD
+        ================================================== */
+
+        .upload-card {
+
+            background:
+                #ffffff;
+
+            border:
+                1px solid #e5e7eb;
+
+            border-radius:
+                16px;
+
+            padding:
+                24px;
+
+            margin-bottom:
+                24px;
+
+            box-shadow:
+                0 4px 15px rgba(0, 0, 0, 0.04);
+        }
+
+
+        .upload-card h2 {
+
+            margin:
+                0 0 8px;
+
+            font-size:
+                20px;
+
+            color:
+                #111827;
+        }
+
+
+        .upload-card .description {
+
+            margin:
+                0 0 20px;
+
+            color:
+                #6b7280;
+
+            font-size:
+                14px;
+
+            line-height:
+                1.6;
+        }
+
+
+        .upload-form {
+
+            display:
+                flex;
+
+            gap:
+                12px;
+
+            align-items:
+                center;
+
+            flex-wrap:
+                wrap;
+        }
+
+
+        .file-input-wrapper {
+
+            flex:
+                1;
+
+            min-width:
+                280px;
+        }
+
+
+        .file-input {
+
+            width:
+                100%;
+
+            padding:
+                12px;
+
+            border:
+                1px solid #d1d5db;
+
+            border-radius:
+                10px;
+
+            background:
+                #f9fafb;
+
+            font-size:
+                14px;
+
+            cursor:
+                pointer;
+        }
+
+
+        .file-input:hover {
+
+            border-color:
+                #93c5fd;
+        }
+
+
+        .upload-button {
+
+            border:
+                none;
+
+            background:
+                #2563eb;
+
+            color:
+                white;
+
+            padding:
+                12px 22px;
+
+            border-radius:
+                10px;
+
+            font-size:
+                14px;
+
+            font-weight:
+                600;
+
+            cursor:
+                pointer;
+
+            transition:
+                0.2s;
+        }
+
+
+        .upload-button:hover {
+
+            background:
+                #1d4ed8;
+        }
+
+
+        .upload-button:disabled {
+
+            background:
+                #9ca3af;
+
+            cursor:
+                not-allowed;
+        }
+
+
+        .file-help {
+
+            margin-top:
+                10px;
+
+            font-size:
+                13px;
+
+            color:
+                #6b7280;
+        }
+
+
+        /* ==================================================
+           CURRENT FILE
+        ================================================== */
+
+        .current-file {
+
+            margin-top:
+                20px;
+
+            padding:
+                15px 18px;
+
+            background:
+                #f8fafc;
+
+            border:
+                1px solid #e2e8f0;
+
+            border-radius:
+                10px;
+
+            display:
+                flex;
+
+            align-items:
+                center;
+
+            justify-content:
+                space-between;
+
+            gap:
+                15px;
+
+            flex-wrap:
+                wrap;
+        }
+
+
+        .current-file-info {
+
+            display:
+                flex;
+
+            flex-direction:
+                column;
+
+            gap:
+                4px;
+        }
+
+
+        .current-file-name {
+
+            font-weight:
+                600;
+
+            color:
+                #111827;
+        }
+
+
+        .current-file-date {
+
+            font-size:
+                13px;
+
+            color:
+                #6b7280;
+        }
+
+
+        .file-status {
+
+            display:
+                inline-flex;
+
+            align-items:
+                center;
+
+            gap:
+                6px;
+
+            padding:
+                6px 10px;
+
+            background:
+                #dcfce7;
+
+            color:
+                #166534;
+
+            border-radius:
+                999px;
+
+            font-size:
+                12px;
+
+            font-weight:
+                600;
+        }
+
+
+        .status-dot {
+
+            width:
+                7px;
+
+            height:
+                7px;
+
+            border-radius:
+                50%;
+
+            background:
+                #22c55e;
+        }
+
+
+        /* ==================================================
+           NO STOCK
+        ================================================== */
+
+        .empty-card {
+
+            background:
+                #ffffff;
+
+            border:
+                1px solid #e5e7eb;
+
+            border-radius:
+                16px;
+
+            padding:
+                50px 25px;
+
+            text-align:
+                center;
+
+            box-shadow:
+                0 4px 15px rgba(0, 0, 0, 0.04);
+        }
+
+
+        .empty-icon {
+
+            font-size:
+                55px;
+
+            margin-bottom:
+                15px;
+        }
+
+
+        .empty-card h2 {
+
+            margin:
+                0 0 10px;
+
+            color:
+                #374151;
+        }
+
+
+        .empty-card p {
+
+            margin:
+                0;
+
+            color:
+                #6b7280;
+
+            line-height:
+                1.7;
+        }
+
+
+        /* ==================================================
+           STOCK SUMMARY
+        ================================================== */
+
+        .summary-grid {
+
+            display:
+                grid;
+
+            grid-template-columns:
+                repeat(3, 1fr);
+
+            gap:
+                16px;
+
+            margin-bottom:
+                24px;
+        }
+
+
+        .summary-card {
+
+            background:
+                #ffffff;
+
+            border:
+                1px solid #e5e7eb;
+
+            border-radius:
+                14px;
+
+            padding:
+                20px;
+
+            box-shadow:
+                0 4px 15px rgba(0, 0, 0, 0.03);
+        }
+
+
+        .summary-label {
+
+            font-size:
+                13px;
+
+            color:
+                #6b7280;
+
+            margin-bottom:
+                8px;
+        }
+
+
+        .summary-value {
+
+            font-size:
+                28px;
+
+            font-weight:
+                700;
+
+            color:
+                #111827;
+        }
+
+
+        /* ==================================================
+           TABLE CARD
+        ================================================== */
+
+        .table-card {
+
+            background:
+                #ffffff;
+
+            border:
+                1px solid #e5e7eb;
+
+            border-radius:
+                16px;
+
+            overflow:
+                hidden;
+
+            box-shadow:
+                0 4px 15px rgba(0, 0, 0, 0.04);
+        }
+
+
+        .table-header {
+
+            padding:
+                20px;
+
+            border-bottom:
+                1px solid #e5e7eb;
+
+            display:
+                flex;
+
+            align-items:
+                center;
+
+            justify-content:
+                space-between;
+
+            gap:
+                15px;
+
+            flex-wrap:
+                wrap;
+        }
+
+
+        .table-title {
+
+            margin:
+                0;
+
+            font-size:
+                20px;
+
+            color:
+                #111827;
+        }
+
+
+        .search-box {
+
+            width:
+                300px;
+
+            max-width:
+                100%;
+
+            padding:
+                10px 14px;
+
+            border:
+                1px solid #d1d5db;
+
+            border-radius:
+                9px;
+
+            font-size:
+                14px;
+
+            outline:
+                none;
+        }
+
+
+        .search-box:focus {
+
+            border-color:
+                #2563eb;
+
+            box-shadow:
+                0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+
+        .table-wrapper {
+
+            width:
+                100%;
+
+            overflow-x:
+                auto;
+        }
+
+
+        table {
+
+            width:
+                100%;
+
+            border-collapse:
+                collapse;
+
+            min-width:
+                700px;
+        }
+
+
+        thead {
+
+            background:
+                #f8fafc;
+        }
+
+
+        th {
+
+            padding:
+                13px 15px;
+
+            text-align:
+                left;
+
+            font-size:
+                13px;
+
+            font-weight:
+                700;
+
+            color:
+                #374151;
+
+            border-bottom:
+                1px solid #e5e7eb;
+
+            white-space:
+                nowrap;
+        }
+
+
+        td {
+
+            padding:
+                13px 15px;
+
+            font-size:
+                14px;
+
+            color:
+                #4b5563;
+
+            border-bottom:
+                1px solid #f1f5f9;
+
+            white-space:
+                nowrap;
+        }
+
+
+        tbody tr:hover {
+
+            background:
+                #f8fafc;
+        }
+
+
+        tbody tr:last-child td {
+
+            border-bottom:
+                none;
+        }
+
+
+        .no-result {
+
+            display:
+                none;
+
+            padding:
+                35px;
+
+            text-align:
+                center;
+
+            color:
+                #6b7280;
+        }
+
+
+        /* ==================================================
+           FOOTER
+        ================================================== */
+
+        .footer {
+
+            text-align:
+                center;
+
+            color:
+                #9ca3af;
+
+            font-size:
+                13px;
+
+            padding:
+                25px 0 0;
+        }
+
+
+        /* ==================================================
+           LOADING
+        ================================================== */
+
+        .loading-text {
+
+            display:
+                none;
+
+            margin-top:
+                10px;
+
+            color:
+                #2563eb;
+
+            font-size:
+                13px;
+        }
+
+
+        /* ==================================================
+           RESPONSIVE
+        ================================================== */
+
+        @media (
+            max-width: 900px
+        ) {
+
+            .navbar {
+
+                padding:
+                    12px 16px;
+
+                align-items:
+                    flex-start;
+
+                flex-direction:
+                    column;
+
+                gap:
+                    10px;
+            }
+
+
+            .container {
+
+                padding:
+                    22px 14px 40px;
+            }
+
+
+            .summary-grid {
+
+                grid-template-columns:
+                    1fr;
+            }
+
+
+            .page-header h1 {
+
+                font-size:
+                    25px;
+            }
+
+        }
+
+
+        @media (
+            max-width: 600px
+        ) {
+
+            .upload-form {
+
+                flex-direction:
+                    column;
+
+                align-items:
+                    stretch;
+            }
+
+
+            .file-input-wrapper {
+
+                min-width:
+                    100%;
+            }
+
+
+            .upload-button {
+
+                width:
+                    100%;
+            }
+
+
+            .current-file {
+
+                align-items:
+                    flex-start;
+
+                flex-direction:
+                    column;
+            }
+
+
+            .table-header {
+
+                align-items:
+                    stretch;
+
+                flex-direction:
+                    column;
+            }
+
+
+            .search-box {
+
+                width:
+                    100%;
+            }
+
+
+            .nav-links {
+
+                width:
+                    100%;
+
+                overflow-x:
+                    auto;
+
+                flex-wrap:
+                    nowrap;
+            }
+
+
+            .nav-links a {
+
+                white-space:
+                    nowrap;
+            }
+
+        }
+
+    </style>
+
+</head>
+
+
+<body>
+
+
+<!-- ========================================================
+     NAVBAR
+========================================================= -->
+
+<nav class="navbar">
+
+    <a
+        href="{{ url_for('index') }}"
+        class="brand"
+    >
+        Medication Management
+    </a>
+
+
+    <div class="nav-links">
+
+        <a
+            href="{{ url_for('index') }}"
+        >
+            หน้าหลัก
+        </a>
+
+
+        <a
+            href="{{ url_for('prescription') }}"
+        >
+            ใบสั่งยา
+        </a>
+
+
+        <a
+            href="{{ url_for('stock') }}"
+            class="active"
+        >
+            Stock ยา
+        </a>
+
+
+        <a
+            href="{{ url_for('interactions') }}"
+        >
+            Drug Interaction
+        </a>
+
+
+        <a
+            href="{{ url_for('interaction_check') }}"
+        >
+            ตรวจ Interaction
+        </a>
+
+
+        <a
+            href="{{ url_for('appointment') }}"
+        >
+            นัดหมาย
+        </a>
+
+
+        <a
+            href="{{ url_for('history') }}"
+        >
+            ประวัติ
+        </a>
+
+    </div>
+
+</nav>
+
+
+<!-- ========================================================
+     MAIN
+========================================================= -->
+
+<main class="container">
+
+
+    <!-- ====================================================
+         PAGE HEADER
+    ===================================================== -->
+
+    <div class="page-header">
+
+        <h1>
+            💊 Stock ยา
+        </h1>
+
+        <p>
+            จัดการและตรวจสอบจำนวนยาคงเหลือจากไฟล์ Excel
+        </p>
+
+    </div>
+
+
+    <!-- ====================================================
+         SUCCESS
+    ===================================================== -->
+
+    {% if success %}
+
+        <div class="alert alert-success">
+
+            ✓ {{ success }}
+
+        </div>
+
+    {% endif %}
+
+
+    <!-- ====================================================
+         ERROR
+    ===================================================== -->
+
+    {% if error %}
+
+        <div class="alert alert-error">
+
+            ⚠ {{ error }}
+
+        </div>
+
+    {% endif %}
+
+
+    <!-- ====================================================
+         UPLOAD CARD
+    ===================================================== -->
+
+    <section class="upload-card">
+
+        <h2>
+            📁 อัปโหลดไฟล์ Stock
+        </h2>
+
+
+        <p class="description">
+
+            เลือกไฟล์ Excel ที่ต้องการใช้เป็น Stock
+            ระบบจะเก็บไฟล์ไว้ในระบบ และใช้ข้อมูลไฟล์ล่าสุด
+            สำหรับตรวจสอบ Stock ในขั้นตอนการจ่ายยา
+
+        </p>
+
+
+        <form
+            action="{{ url_for('stock') }}"
+            method="POST"
+            enctype="multipart/form-data"
+            class="upload-form"
+            id="stockUploadForm"
+        >
+
+            <div class="file-input-wrapper">
+
+                <input
+                    type="file"
+                    name="stock_file"
+                    id="stockFile"
+                    class="file-input"
+                    accept=".xlsx,.xlsm"
+                    required
+                >
+
+            </div>
+
+
+            <button
+                type="submit"
+                class="upload-button"
+                id="uploadButton"
+            >
+                📤 อัปโหลด / เปลี่ยนไฟล์ Stock
+            </button>
+
+        </form>
+
+
+        <div
+            class="file-help"
+            id="fileHelp"
+        >
+            รองรับไฟล์ Excel .xlsx และ .xlsm
+        </div>
+
+
+        <div
+            class="loading-text"
+            id="loadingText"
+        >
+            ⏳ กำลังตรวจสอบและอัปโหลดไฟล์...
+        </div>
+
+
+        <!-- ================================================
+             CURRENT FILE
+        ================================================= -->
+
+        {% if stock_exists %}
+
+            <div class="current-file">
+
+                <div class="current-file-info">
+
+                    <div class="current-file-name">
+
+                        📄 ไฟล์ปัจจุบัน:
+                        {{ stock_filename }}
+
+                    </div>
+
+
+                    {% if stock_updated_at %}
+
+                        <div class="current-file-date">
+
+                            อัปเดตล่าสุด:
+                            {{ stock_updated_at }}
+
+                        </div>
+
+                    {% endif %}
+
+                </div>
+
+
+                <div class="file-status">
+
+                    <span class="status-dot"></span>
+
+                    ใช้งานอยู่
+
+                </div>
+
+            </div>
+
+        {% endif %}
+
+    </section>
+
+
+    <!-- ====================================================
+         NO STOCK
+    ===================================================== -->
+
+    {% if not stock_data %}
+
+        <section class="empty-card">
+
+            <div class="empty-icon">
+                📦
+            </div>
+
+
+            <h2>
+                ยังไม่มีข้อมูล Stock
+            </h2>
+
+
+            <p>
+
+                กรุณาเลือกไฟล์ Excel Stock
+                ด้านบนเพื่อเริ่มต้นใช้งานระบบ
+
+                <br>
+
+                เมื่ออัปโหลดแล้ว
+                ข้อมูล Stock จะถูกเก็บไว้ในระบบ
+                และยังคงอยู่เมื่อกลับเข้าหน้านี้อีกครั้ง
+
+            </p>
+
+        </section>
+
+    {% else %}
+
+
+        <!-- =================================================
+             SUMMARY
+        ================================================== -->
+
+        <section class="summary-grid">
+
+
+            <!-- =============================================
+                 TOTAL ITEMS
+            ============================================== -->
+
+            <div class="summary-card">
+
+                <div class="summary-label">
+                    จำนวนรายการยา
+                </div>
+
+                <div class="summary-value">
+                    {{ stock_data|length }}
+                </div>
+
+            </div>
+
+
+            <!-- =============================================
+                 FILE STATUS
+            ============================================== -->
+
+            <div class="summary-card">
+
+                <div class="summary-label">
+                    สถานะไฟล์
+                </div>
+
+                <div class="summary-value">
+
+                    {% if stock_exists %}
+                        ✓
+                    {% else %}
+                        -
+                    {% endif %}
+
+                </div>
+
+            </div>
+
+
+            <!-- =============================================
+                 UPDATE
+            ============================================== -->
+
+            <div class="summary-card">
+
+                <div class="summary-label">
+                    อัปเดตล่าสุด
+                </div>
+
+                <div
+                    class="summary-value"
+                    style="
+                        font-size: 18px;
+                        padding-top: 6px;
+                    "
+                >
+
+                    {% if stock_updated_at %}
+
+                        {{ stock_updated_at }}
+
+                    {% else %}
+
+                        -
+
+                    {% endif %}
+
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- =================================================
+             STOCK TABLE
+        ================================================== -->
+
+        <section class="table-card">
+
+
+            <div class="table-header">
+
+                <h2 class="table-title">
+                    📋 รายการ Stock
+                </h2>
+
+
+                <input
+                    type="text"
+                    id="stockSearch"
+                    class="search-box"
+                    placeholder="🔍 ค้นหาชื่อยา..."
+                    autocomplete="off"
+                >
+
+            </div>
+
+
+            <div class="table-wrapper">
+
+                <table id="stockTable">
+
+                    <thead>
+
+                        <tr>
+
+                            {% for key in stock_data[0].keys() %}
+
+                                <th>
+                                    {{ key }}
+                                </th>
+
+                            {% endfor %}
+
+                        </tr>
+
+                    </thead>
+
+
+                    <tbody id="stockTableBody">
+
+                        {% for item in stock_data %}
+
+                            <tr>
+
+                                {% for key in stock_data[0].keys() %}
+
+                                    <td>
+
+                                        {% set value = item.get(key, '') %}
+
+                                        {% if value is none %}
+
+                                            -
+
+                                        {% else %}
+
+                                            {{ value }}
+
+                                        {% endif %}
+
+                                    </td>
+
+                                {% endfor %}
+
+                            </tr>
+
+                        {% endfor %}
+
+                    </tbody>
+
+                </table>
+
+
+                <div
+                    class="no-result"
+                    id="noResult"
+                >
+
+                    🔍 ไม่พบข้อมูลที่ค้นหา
+
+                </div>
+
+            </div>
+
+        </section>
+
+    {% endif %}
+
+
+    <!-- ====================================================
+         FOOTER
+    ===================================================== -->
+
+    <div class="footer">
+
+        Medication Management System
+
+        <br>
+
+        Stock Management
+
+    </div>
+
+
+</main>
+
+
+<!-- ========================================================
+     JAVASCRIPT
+========================================================= -->
+
+<script>
+
+
+    // ======================================================
+    // FILE NAME DISPLAY
+    // ======================================================
+
+    const stockFile =
+        document.getElementById(
+            "stockFile"
+        );
+
+
+    const fileHelp =
+        document.getElementById(
+            "fileHelp"
+        );
+
+
+    if (stockFile) {
+
+        stockFile.addEventListener(
+            "change",
+            function () {
+
+                if (
+                    this.files &&
+                    this.files.length > 0
+                ) {
+
+                    const file =
+                        this.files[0];
+
+
+                    fileHelp.textContent =
+                        "ไฟล์ที่เลือก: "
+                        + file.name;
+
+
+                } else {
+
+                    fileHelp.textContent =
+                        "รองรับไฟล์ Excel .xlsx และ .xlsm";
+
+                }
+
+            }
+        );
+
+    }
+
+
+    // ======================================================
+    // UPLOAD LOADING
+    // ======================================================
+
+    const stockUploadForm =
+        document.getElementById(
+            "stockUploadForm"
+        );
+
+
+    const uploadButton =
+        document.getElementById(
+            "uploadButton"
+        );
+
+
+    const loadingText =
+        document.getElementById(
+            "loadingText"
+        );
+
+
+    if (stockUploadForm) {
+
+        stockUploadForm.addEventListener(
+            "submit",
+            function () {
+
+                if (uploadButton) {
+
+                    uploadButton.disabled =
+                        true;
+
+                    uploadButton.textContent =
+                        "⏳ กำลังอัปโหลด...";
+
+                }
+
+
+                if (loadingText) {
+
+                    loadingText.style.display =
+                        "block";
+
+                }
+
+            }
+        );
+
+    }
+
+
+    // ======================================================
+    // STOCK SEARCH
+    // ======================================================
+
+    const searchInput =
+        document.getElementById(
+            "stockSearch"
+        );
+
+
+    const tableBody =
+        document.getElementById(
+            "stockTableBody"
+        );
+
+
+    const noResult =
+        document.getElementById(
+            "noResult"
+        );
+
+
+    if (
+        searchInput &&
+        tableBody
+    ) {
+
+        searchInput.addEventListener(
+            "input",
+            function () {
+
+                const keyword =
+                    this.value
+                        .toLowerCase()
+                        .trim();
+
+
+                const rows =
+                    tableBody.querySelectorAll(
+                        "tr"
+                    );
+
+
+                let visibleCount = 0;
+
+
+                rows.forEach(
+                    function (row) {
+
+                        const text =
+                            row.textContent
+                                .toLowerCase();
+
+
+                        if (
+                            text.includes(
+                                keyword
+                            )
+                        ) {
+
+                            row.style.display =
+                                "";
+
+                            visibleCount++;
+
+                        } else {
+
+                            row.style.display =
+                                "none";
+
+                        }
+
+                    }
+                );
+
+
+                if (noResult) {
+
+                    if (
+                        visibleCount === 0
+                    ) {
+
+                        noResult.style.display =
+                            "block";
+
+                    } else {
+
+                        noResult.style.display =
+                            "none";
+
+                    }
+
+                }
+
+            }
+        );
+
+    }
+
+
+</script>
+
+
+</body>
+
+</html>
+```
