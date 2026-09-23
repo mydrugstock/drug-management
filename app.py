@@ -114,99 +114,8 @@ PROLOG_DRUG_ATOMS = {
 }
 
 
-# ============================================================
-# INDICATION CHECKING (ยา <-> ICD-10)
-# ============================================================
-DRUG_INDICATION_ATOMS = {
-    "losartan": ["i10"],
-    "enalapril": ["i10"],
-    "captopril": ["i10"],
-    "amlodipine": ["i10"],
-    "atenolol": ["i10"],
-    "carvedilol": ["i10", "i50"],
-    "metoprolol": ["i10", "i50"],
-    "methyldopa": ["i10"],
-    "spironolactone": ["i50"],
-    "amiloride_hydrochlorothiazide": ["i10"],
-    "pioglitazone": ["e11"],
-    "glipizide": ["e11"],
-    "insulin_nph": ["e11"],
-    "propranolol": ["i10", "i47"],
-    "simvastatin": ["e78"],
-}
 
-ICD10_LABELS = {
-    "i10": "Essential (primary) hypertension",
-    "i50": "Heart failure",
-    "e11": "Type 2 diabetes mellitus",
-    "e78": "Disorders of lipoprotein metabolism (dyslipidemia)",
-    "i47": "Paroxysmal tachycardia",
-}
-
-
-def resolve_indications_for_drug(drug_name):
-    atom = resolve_prolog_drug(drug_name)
-    if not atom:
-        return atom, []
-    return atom, DRUG_INDICATION_ATOMS.get(atom, [])
-
-
-def check_drug_indications(patient):
-    diagnosis_raw = patient.get("diagnosis_icd10") or []
-    diagnosis_codes = {
-        str(code).strip().lower()
-        for code in diagnosis_raw
-        if str(code).strip()
-    }
-
-    medicines = patient.get("medicines", []) or []
-    results = []
-
-    for medicine in medicines:
-        drug_name = str(medicine.get("name", "") or "").strip()
-        if not drug_name:
-            continue
-
-        atom, expected_codes = resolve_indications_for_drug(drug_name)
-
-        if atom is None:
-            continue
-
-        if not expected_codes:
-            continue
-
-        if not diagnosis_codes:
-            results.append({
-                "Drug": drug_name,
-                "Matched": None,
-                "Expected_Indications": [
-                    ICD10_LABELS.get(c, c) for c in expected_codes
-                ],
-                "Note": (
-                    "ไม่มีข้อมูลการวินิจฉัย (diagnosis) ของผู้ป่วยในระบบ "
-                    "ไม่สามารถยืนยันได้ว่ายาตรงข้อบ่งใช้หรือไม่"
-                ),
-            })
-            continue
-
-        matched = bool(diagnosis_codes & set(expected_codes))
-
-        if not matched:
-            results.append({
-                "Drug": drug_name,
-                "Matched": False,
-                "Expected_Indications": [
-                    ICD10_LABELS.get(c, c) for c in expected_codes
-                ],
-                "Note": (
-                    "ไม่พบการวินิจฉัยของผู้ป่วยที่ตรงกับข้อบ่งใช้ปกติของยานี้ "
-                    "กรุณาตรวจสอบกับแพทย์ผู้สั่งยา"
-                ),
-            })
-
-    return results
-
-
+# ไฟล์ต้นฉบับใบสั่งยาที่ระบบเก็บไว้เพื่อ Sync แบบ Real-time
 PRESCRIPTION_SOURCE_FILE = os.path.join(
     DATA_FOLDER,
     "prescription_source.xlsx"
@@ -226,8 +135,20 @@ DATABASE_FILE = os.path.join(
 )
 
 
-os.makedirs(DATA_FOLDER, exist_ok=True)
-os.makedirs(CONSULT_FOLDER, exist_ok=True)
+# ============================================================
+# CREATE FOLDERS
+# ============================================================
+
+os.makedirs(
+    DATA_FOLDER,
+    exist_ok=True
+)
+
+
+os.makedirs(
+    CONSULT_FOLDER,
+    exist_ok=True
+)
 
 
 # ============================================================
@@ -235,90 +156,200 @@ os.makedirs(CONSULT_FOLDER, exist_ok=True)
 # ============================================================
 
 def get_db():
-    conn = sqlite3.connect(DATABASE_FILE, timeout=10)
+
+    conn = sqlite3.connect(
+        DATABASE_FILE,
+        timeout=10
+    )
+
     conn.row_factory = sqlite3.Row
+
     return conn
 
 
-def add_column_if_missing(conn, table_name, column_name, column_type):
+def add_column_if_missing(
+    conn,
+    table_name,
+    column_name,
+    column_type
+):
+
     columns = conn.execute(
-        "PRAGMA table_info({})".format(table_name)
+        "PRAGMA table_info({})".format(
+            table_name
+        )
     ).fetchall()
 
-    existing_columns = [row["name"] for row in columns]
+
+    existing_columns = [
+        row["name"]
+        for row in columns
+    ]
+
 
     if column_name not in existing_columns:
+
         conn.execute(
             "ALTER TABLE {} ADD COLUMN {} {}".format(
-                table_name, column_name, column_type
+                table_name,
+                column_name,
+                column_type
             )
         )
 
 
+# ============================================================
+# INIT DATABASE
+# ============================================================
+
 def init_database():
+
     conn = get_db()
 
+
     try:
+
+        # ====================================================
+        # PRESCRIPTION QUEUE
+        # ====================================================
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS prescription_queue (
+
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+
                 hn TEXT,
+
                 dispense_date TEXT,
+
                 patient_json TEXT,
+
                 status TEXT DEFAULT 'pending',
+
                 created_at TEXT,
+
                 resolved_at TEXT
+
             )
         """)
+
+
+        # ====================================================
+        # MEDICATION HISTORY
+        # ====================================================
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS medication_history (
+
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+
                 queue_id INTEGER,
+
                 hn TEXT,
+
                 patient_name TEXT,
+
                 age TEXT,
+
                 dispense_date TEXT,
+
                 appointment_date TEXT,
+
                 decision TEXT,
+
                 decision_text TEXT,
+
                 original_drugs TEXT,
+
                 substitute_drug TEXT,
+
                 interaction_count INTEGER DEFAULT 0,
+
                 dispensed_at TEXT
+
             )
         """)
 
+
+        # ====================================================
+        # MIGRATION QUEUE
+        # ====================================================
+
         queue_columns = [
+
             ("hn", "TEXT"),
+
             ("dispense_date", "TEXT"),
+
             ("appointment_date", "TEXT"),
+
             ("patient_json", "TEXT"),
+
             ("status", "TEXT DEFAULT 'pending'"),
+
             ("created_at", "TEXT"),
+
             ("resolved_at", "TEXT")
+
         ]
+
 
         for column_name, column_type in queue_columns:
-            add_column_if_missing(conn, "prescription_queue", column_name, column_type)
+
+            add_column_if_missing(
+                conn,
+                "prescription_queue",
+                column_name,
+                column_type
+            )
+
+
+        # ====================================================
+        # MIGRATION HISTORY
+        # ====================================================
 
         history_columns = [
+
             ("queue_id", "INTEGER"),
+
             ("hn", "TEXT"),
+
             ("patient_name", "TEXT"),
+
             ("age", "TEXT"),
+
             ("dispense_date", "TEXT"),
+
             ("appointment_date", "TEXT"),
+
             ("decision", "TEXT"),
+
             ("decision_text", "TEXT"),
+
             ("original_drugs", "TEXT"),
+
             ("substitute_drug", "TEXT"),
+
             ("interaction_count", "INTEGER DEFAULT 0"),
+
             ("dispensed_at", "TEXT")
+
         ]
 
+
         for column_name, column_type in history_columns:
-            add_column_if_missing(conn, "medication_history", column_name, column_type)
+
+            add_column_if_missing(
+                conn,
+                "medication_history",
+                column_name,
+                column_type
+            )
+
+
+        # ====================================================
+        # DEFAULT DATA FIX
+        # ====================================================
 
         conn.execute("""
             UPDATE prescription_queue
@@ -326,11 +357,20 @@ def init_database():
             WHERE status IS NULL
         """)
 
+
         conn.execute("""
             UPDATE medication_history
             SET interaction_count = 0
             WHERE interaction_count IS NULL
         """)
+
+
+        # ====================================================
+        # MERGE DUPLICATE PENDING QUEUE BY HN
+        # ====================================================
+        # 1 HN = 1 รายการบนหน้าผลการตรวจ
+        # ถ้ามีหลายแถว/หลายรายการยาใน HN เดียวกัน ให้รวมยาเข้าด้วยกัน
+        # และเก็บ dispense_date / appointment_date ของ HN เดียวกันไว้ในรายการเดียว
 
         duplicate_rows = conn.execute("""
             SELECT hn
@@ -373,7 +413,10 @@ def init_database():
                 if not appointment:
                     appointment = str(extra["appointment_date"] or extra_patient.get("appointment_date", "")).strip()
 
-                conn.execute("DELETE FROM prescription_queue WHERE id = ?", (extra["id"],))
+                conn.execute(
+                    "DELETE FROM prescription_queue WHERE id = ?",
+                    (extra["id"],)
+                )
 
             merged["hn"] = hn_value
             merged["dispense_date"] = dispense
@@ -394,7 +437,13 @@ def init_database():
                 keep["id"]
             ))
 
+        # ลบ unique index เดิมที่บังคับ HN+วันที่ แล้วใช้ HN เป็นตัวหลัก
         conn.execute("DROP INDEX IF EXISTS uq_queue_hn_date")
+
+
+        # ====================================================
+        # DUPLICATE HISTORY CLEANUP
+        # ====================================================
 
         duplicate_history = conn.execute("""
             SELECT
@@ -406,27 +455,44 @@ def init_database():
             HAVING COUNT(*) > 1
         """).fetchall()
 
+
         for row in duplicate_history:
+
             conn.execute("""
                 DELETE FROM medication_history
                 WHERE queue_id = ?
                 AND id != ?
-            """, (row["queue_id"], row["keep_id"]))
+            """, (
+                row["queue_id"],
+                row["keep_id"]
+            ))
+
+
+        # ====================================================
+        # INDEX
+        # ====================================================
 
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_queue_status
             ON prescription_queue(status)
         """)
 
+
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_queue_hn
             ON prescription_queue(hn)
         """)
 
+
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_history_queue
             ON medication_history(queue_id)
         """)
+
+
+        # ====================================================
+        # UNIQUE QUEUE
+        # ====================================================
 
         conn.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS
@@ -435,13 +501,20 @@ def init_database():
             WHERE status = 'pending'
         """)
 
+
+        # ====================================================
+        # UNIQUE HISTORY
+        # ====================================================
+
         conn.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS
             uq_history_queue
             ON medication_history(queue_id)
         """)
 
+
         conn.commit()
+
 
         print("")
         print("=" * 70)
@@ -449,68 +522,161 @@ def init_database():
         print("Database:", DATABASE_FILE)
         print("=" * 70)
 
+
     except Exception as e:
+
         conn.rollback()
+
         print("")
         print("=" * 70)
         print("ERROR INITIALIZING DATABASE")
         print(repr(e))
         print("=" * 70)
+
         raise
 
+
     finally:
+
         conn.close()
 
+
+# ============================================================
+# INITIALIZE DATABASE
+# ============================================================
 
 init_database()
 
 
+# ============================================================
+# TEST SUBSTITUTE DRUGS
+# ============================================================
+
 TEST_SUBSTITUTE_DRUGS = [
-    {"name": "Test Substitute Drug A", "strength": "Test strength", "note": "ข้อมูลสำหรับทดสอบระบบเท่านั้น"},
-    {"name": "Test Substitute Drug B", "strength": "Test strength", "note": "ข้อมูลสำหรับทดสอบระบบเท่านั้น"},
-    {"name": "Test Substitute Drug C", "strength": "Test strength", "note": "ข้อมูลสำหรับทดสอบระบบเท่านั้น"}
+
+    {
+        "name": "Test Substitute Drug A",
+        "strength": "Test strength",
+        "note": "ข้อมูลสำหรับทดสอบระบบเท่านั้น"
+    },
+
+    {
+        "name": "Test Substitute Drug B",
+        "strength": "Test strength",
+        "note": "ข้อมูลสำหรับทดสอบระบบเท่านั้น"
+    },
+
+    {
+        "name": "Test Substitute Drug C",
+        "strength": "Test strength",
+        "note": "ข้อมูลสำหรับทดสอบระบบเท่านั้น"
+    }
+
 ]
 
 
+# ============================================================
+# NORMALIZE DRUG NAME
+# ============================================================
+
 def normalize_drug_name(name):
+
     if name is None:
+
         return ""
+
+
     name = str(name).strip().lower()
+
     name = name.replace(" ", "")
     name = name.replace("-", "")
     name = name.replace("_", "")
+
+
     return name
 
 
+# ============================================================
+# LOAD INTERACTIONS
+# ============================================================
+
 def load_interactions():
+
     interactions = []
+
+
     interaction_path = INTERACTION_FILE
     if not os.path.exists(interaction_path):
         interaction_path = INTERACTION_FILE_FALLBACK
+
     if not os.path.exists(interaction_path):
         return interactions
 
-    try:
-        wb = load_workbook(interaction_path, data_only=True)
-        ws = wb.active
-        headers = [cell.value for cell in ws[1]]
 
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            if not any(value is not None for value in row):
+    try:
+
+        wb = load_workbook(
+            interaction_path,
+            data_only=True
+        )
+
+
+        ws = wb.active
+
+
+        headers = [
+            cell.value
+            for cell in ws[1]
+        ]
+
+
+        for row in ws.iter_rows(
+            min_row=2,
+            values_only=True
+        ):
+
+            if not any(
+                value is not None
+                for value in row
+            ):
+
                 continue
+
+
             item = {}
+
+
             for i, header in enumerate(headers):
-                if header is not None and i < len(row):
+
+                if (
+                    header is not None
+                    and
+                    i < len(row)
+                ):
+
                     item[header] = row[i]
+
+
             interactions.append(item)
+
 
         wb.close()
 
+
     except Exception as e:
-        print("ERROR loading interaction file:", repr(e))
+
+        print(
+            "ERROR loading interaction file:",
+            repr(e)
+        )
+
 
     return interactions
 
+
+# ============================================================
+# CHECK DRUG INTERACTIONS
+# ============================================================
 
 def resolve_prolog_drug(name):
     normalized = normalize_drug_name(name)
@@ -524,6 +690,7 @@ def resolve_prolog_drug(name):
 
 
 def _prolog_query_pair(atom_a, atom_b):
+    """เรียก SWI-Prolog แยก process เพื่อไม่ให้ DLL ของ PySWIP ชนกับ Flask/openpyxl"""
     if not os.path.exists(PROLOG_FILE):
         raise FileNotFoundError(
             "ไม่พบไฟล์ drug_interaction.pl ที่: {}".format(PROLOG_FILE)
@@ -531,15 +698,23 @@ def _prolog_query_pair(atom_a, atom_b):
 
     swipl = shutil.which("swipl")
 
+    # ถ้าไม่ได้อยู่ใน PATH ให้ค้นหาตำแหน่งติดตั้ง SWI-Prolog ที่พบบ่อยบน Windows
     if not swipl:
         possible_paths = [
-            os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"), "swipl", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"), "SWI-Prolog", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"), "swipl", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"), "SWI-Prolog", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), "swipl", "bin", "swipl.exe"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), "SWI-Prolog", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
+                         "swipl", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"),
+                         "SWI-Prolog", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
+                         "swipl", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
+                         "SWI-Prolog", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                         "swipl", "bin", "swipl.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                         "SWI-Prolog", "bin", "swipl.exe"),
         ]
+
         for candidate in possible_paths:
             if candidate and os.path.isfile(candidate):
                 swipl = candidate
@@ -547,9 +722,14 @@ def _prolog_query_pair(atom_a, atom_b):
 
     if not swipl:
         raise RuntimeError(
-            "ไม่พบ swipl.exe ของ SWI-Prolog กรุณาติดตั้ง SWI-Prolog หรือแจ้งตำแหน่งที่ติดตั้ง"
+            "ไม่พบ swipl.exe ของ SWI-Prolog "
+            "กรุณาติดตั้ง SWI-Prolog หรือแจ้งตำแหน่งที่ติดตั้ง"
         )
 
+    # atom_a/atom_b มาจาก whitelist เท่านั้น จึงปลอดภัยที่จะนำไปสร้าง goal
+    # ให้ goal สำเร็จเสมอ แม้คู่นี้จะไม่มียาชนกัน
+    # ถ้า check_interaction/5 fail โดยตรง SWI-Prolog จะคืน returncode=1
+    # ทำให้ Python เข้าใจผิดว่าเป็น error
     goal = (
         "(check_interaction({}, {}, Risk, Severity, Warning) -> "
         "format('FOUND\\t~w\\t~w\\t~w', [Risk, Severity, Warning]) ; "
@@ -580,7 +760,9 @@ def _prolog_query_pair(atom_a, atom_b):
     if proc.returncode != 0:
         err = proc.stderr.strip() or proc.stdout.strip() or "(ไม่มีข้อความจาก SWI-Prolog)"
         raise RuntimeError(
-            "SWI-Prolog error while checking {} + {}: {}".format(atom_a, atom_b, err)
+            "SWI-Prolog error while checking {} + {}: {}".format(
+                atom_a, atom_b, err
+            )
         )
 
     output = proc.stdout.strip()
@@ -591,10 +773,15 @@ def _prolog_query_pair(atom_a, atom_b):
     if len(parts) != 4 or parts[0] != "FOUND":
         return None
 
-    return {"Risk": parts[1], "Severity": parts[2], "Warning": parts[3]}
+    return {
+        "Risk": parts[1],
+        "Severity": parts[2],
+        "Warning": parts[3],
+    }
 
 
 def check_drug_interactions(drug_names):
+    """ตรวจ interaction จากรายการยาโดยใช้ drug_interaction.pl ผ่าน SWI-Prolog"""
     resolved = []
     seen_atoms = set()
 
@@ -632,436 +819,14 @@ def check_drug_interactions(drug_names):
 
 
 # ============================================================
-# LAB-BASED DOSE ADJUSTMENT (eGFR / K+ / ALT)
-# ตัดสินใจ (threshold / high-low) ทั้งหมดอยู่ใน drug_interaction.pl
-# Python มีหน้าที่แค่ดึงค่าจาก patient, ส่งไปถาม Prolog, และจัดรูปแบบผลลัพธ์
+# CHECK DRUG INTERACTIONS BY ACTUAL MEDICATION DATES
 # ============================================================
-
-LAB_META = {
-    "egfr": {"field": "egfr", "label": "eGFR", "unit": "ml/min/1.73m2"},
-    "potassium": {"field": "potassium", "label": "K+", "unit": "mEq/L"},
-    "alt": {"field": "alt", "label": "ALT", "unit": "U/L"},
-}
-
-LAB_STATUS_TH = {
-    "high": "สูง",
-    "low": "ต่ำ",
-    "normal": "ปกติ",
-}
-
-
-def _format_prolog_number(value):
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if number.is_integer():
-        return str(int(number))
-    return repr(number)
-
-
-def _resolve_swipl_path():
-    swipl = shutil.which("swipl")
-
-    if swipl:
-        return swipl
-
-    possible_paths = [
-        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "swipl", "bin", "swipl.exe"),
-        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "SWI-Prolog", "bin", "swipl.exe"),
-        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "swipl", "bin", "swipl.exe"),
-        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "SWI-Prolog", "bin", "swipl.exe"),
-        os.path.join(os.environ.get("LOCALAPPDATA", ""), "swipl", "bin", "swipl.exe"),
-        os.path.join(os.environ.get("LOCALAPPDATA", ""), "SWI-Prolog", "bin", "swipl.exe"),
-    ]
-
-    for candidate in possible_paths:
-        if candidate and os.path.isfile(candidate):
-            return candidate
-
-    return None
-
-
-def _prolog_query_lab(lab_items, drug_atoms):
-    """
-    lab_items: list of (lab_key, value) เช่น [("egfr", 25), ("potassium", 5.8)]
-    drug_atoms: list of Prolog drug atom (unique) เช่น ["losartan", "enalapril"]
-
-    ส่งไปถาม drug_interaction.pl (lab_status/4 และ check_lab_adjustment/5)
-    Python ไม่ตัดสินใจ threshold เอง แค่จัดรูปแบบผลลัพธ์ที่ได้กลับมา
-
-    คืนค่า (status_results, adjustment_results):
-      status_results:     [{"Lab":.., "Value":.., "Status":.., "Description":..}, ...]
-      adjustment_results: [{"Drug":.., "Lab":.., "Value":.., "Severity":.., "Recommendation":..}, ...]
-    """
-    if not lab_items:
-        return [], []
-
-    if not os.path.exists(PROLOG_FILE):
-        raise FileNotFoundError(
-            "ไม่พบไฟล์ drug_interaction.pl ที่: {}".format(PROLOG_FILE)
-        )
-
-    swipl = _resolve_swipl_path()
-
-    if not swipl:
-        raise RuntimeError(
-            "ไม่พบ swipl.exe ของ SWI-Prolog กรุณาติดตั้ง SWI-Prolog หรือแจ้งตำแหน่งที่ติดตั้ง"
-        )
-
-    lab_pairs = []
-    for lab_key, value in lab_items:
-        formatted = _format_prolog_number(value)
-        if formatted is None:
-            continue
-        lab_pairs.append("{}-{}".format(lab_key, formatted))
-
-    if not lab_pairs:
-        return [], []
-
-    labs_literal = "[" + ",".join(lab_pairs) + "]"
-    drugs_literal = "[" + ",".join(drug_atoms) + "]" if drug_atoms else "[]"
-
-    goal = (
-        "forall(member(Lab-Value, {labs}), "
-        "(lab_status(Lab, Value, Status, Desc) -> "
-        "format('STATUS\\t~w\\t~w\\t~w\\t~w\\n', [Lab, Value, Status, Desc]) ; true)), "
-        "forall((member(Drug, {drugs}), member(Lab2-Value2, {labs}), "
-        "check_lab_adjustment(Drug, Lab2, Value2, Severity, Recommendation)), "
-        "format('ADJUST\\t~w\\t~w\\t~w\\t~w\\t~w\\n', "
-        "[Drug, Lab2, Value2, Severity, Recommendation])), "
-        "halt(0)"
-    ).format(labs=labs_literal, drugs=drugs_literal)
-
-    print("=== SEND TO PROLOG (LAB) ===")
-    print("Labs:", labs_literal)
-    print("Drugs:", drugs_literal)
-    print("Goal:", goal)
-
-    proc = subprocess.run(
-        [swipl, "-q", "-f", "none", "-s", PROLOG_FILE, "-g", goal],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
-        cwd=BASE_DIR,
-    )
-
-    print("=== PROLOG LAB RESULT ===")
-    print("Return code:", proc.returncode)
-    print("stdout:", proc.stdout.strip())
-    print("stderr:", proc.stderr.strip())
-
-    if proc.returncode != 0:
-        err = proc.stderr.strip() or proc.stdout.strip() or "(ไม่มีข้อความจาก SWI-Prolog)"
-        raise RuntimeError("SWI-Prolog error while checking lab values: {}".format(err))
-
-    status_results = []
-    adjustment_results = []
-
-    for line in proc.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-
-        parts = line.split("\t")
-
-        if parts[0] == "STATUS" and len(parts) == 5:
-            _, lab, value, status, desc = parts
-            status_results.append({
-                "Lab": lab,
-                "Value": value,
-                "Status": status,
-                "Description": desc,
-            })
-
-        elif parts[0] == "ADJUST" and len(parts) == 6:
-            _, drug, lab, value, severity, recommendation = parts
-            adjustment_results.append({
-                "Drug": drug,
-                "Lab": lab,
-                "Value": value,
-                "Severity": severity,
-                "Recommendation": recommendation,
-            })
-
-    return status_results, adjustment_results
-
-
-def _collect_patient_lab_items(patient):
-    lab_items = []
-    for lab_key, meta in LAB_META.items():
-        raw_value = patient.get(meta["field"])
-        if raw_value is None:
-            continue
-        try:
-            value = float(raw_value)
-        except (TypeError, ValueError):
-            continue
-        lab_items.append((lab_key, value))
-    return lab_items
-
-
-def check_lab_status(patient):
-    """
-    คืนรายการค่า lab ของผู้ป่วยทุกตัวที่มีข้อมูลในไฟล์ใบสั่งยา พร้อมสถานะ
-    "สูง / ต่ำ / ปกติ" — คำตัดสินทั้งหมดมาจาก lab_status/4 ใน
-    drug_interaction.pl (Python แค่ดึงค่าจาก patient แล้วจัดรูปแบบผลลัพธ์)
-    """
-    lab_items = _collect_patient_lab_items(patient)
-
-    if not lab_items:
-        return []
-
-    status_results, _ = _prolog_query_lab(lab_items, [])
-
-    results = []
-    for item in status_results:
-        lab_key = item["Lab"]
-        meta = LAB_META.get(lab_key, {"label": lab_key, "unit": ""})
-
-        try:
-            value_display = format_quantity(float(item["Value"]))
-        except Exception:
-            value_display = item["Value"]
-
-        results.append({
-            "Lab": meta["label"],
-            "Value": value_display,
-            "Unit": meta["unit"],
-            "Status": item["Status"],
-            "Status_TH": LAB_STATUS_TH.get(item["Status"], item["Status"]),
-            "Description": item["Description"],
-        })
-
-    return results
-
-
-def check_lab_based_adjustments(patient):
-    """
-    ตรวจยาที่ต้องปรับขนาด/หลีกเลี่ยง ตามค่า lab หลายตัว (eGFR, K+, ALT)
-    Threshold และคำแนะนำทั้งหมดตัดสินใจโดย drug_interaction.pl
-    (check_lab_adjustment/5) — ฟิลด์ไหนไม่มีค่าใน patient จะข้ามไปเฉยๆ
-    ไม่ฟันธงโดยไม่มีข้อมูล
-    """
-    lab_items = _collect_patient_lab_items(patient)
-
-    if not lab_items:
-        return []
-
-    medicines = patient.get("medicines", []) or []
-    atom_to_name = {}
-
-    for medicine in medicines:
-        drug_name = str(medicine.get("name", "") or "").strip()
-        if not drug_name:
-            continue
-        atom = resolve_prolog_drug(drug_name)
-        if atom and atom not in atom_to_name:
-            atom_to_name[atom] = drug_name
-
-    if not atom_to_name:
-        return []
-
-    _, adjustment_results = _prolog_query_lab(lab_items, list(atom_to_name.keys()))
-
-    results = []
-    for item in adjustment_results:
-        lab_key = item["Lab"]
-        meta = LAB_META.get(lab_key, {"label": lab_key, "unit": ""})
-        drug_name = atom_to_name.get(item["Drug"], item["Drug"])
-
-        try:
-            value_display = format_quantity(float(item["Value"]))
-        except Exception:
-            value_display = item["Value"]
-
-        results.append({
-            "Drug": drug_name,
-            "Lab": meta["label"],
-            "Value": value_display,
-            "Unit": meta["unit"],
-            "Severity": item["Severity"],
-            "Recommendation": item["Recommendation"],
-            "Alternatives": [],
-            "Alternatives_Note": (
-                "ระบบยังไม่มีข้อมูลยาทดแทนที่ตรวจสอบแล้วสำหรับกรณีนี้ "
-                "กรุณาให้แพทย์พิจารณา"
-            ),
-        })
-
-    return results
-
-
-# ============================================================
-# BLOOD PRESSURE (BP) CHECK — safety (hypotension) + efficacy flag
-# (uncontrolled HT, ไม่แนะนำเปลี่ยน/เพิ่มยา)
-# ============================================================
-
-import re as _re_bp
-
-
-ANTIHYPERTENSIVE_ATOMS = {
-    "losartan",
-    "enalapril",
-    "captopril",
-    "amlodipine",
-    "atenolol",
-    "carvedilol",
-    "metoprolol",
-    "methyldopa",
-    "propranolol",
-    "amiloride_hydrochlorothiazide",
-}
-
-
-def parse_bp_value(value):
-    """แปลงค่าความดันจากเซลล์ Excel รูปแบบ "130/85" เป็น (sbp, dbp)"""
-    if value is None:
-        return None, None
-
-    text = str(value).strip()
-    if not text:
-        return None, None
-
-    match = _re_bp.match(r"^\s*(\d{2,3})\s*[/\-\s]\s*(\d{2,3})\s*$", text)
-    if not match:
-        return None, None
-
-    try:
-        sbp = float(match.group(1))
-        dbp = float(match.group(2))
-        return sbp, dbp
-    except (TypeError, ValueError):
-        return None, None
-
-
-BP_HYPOTENSION_SBP = 90
-BP_HYPOTENSION_DBP = 60
-
-BP_UNCONTROLLED_SBP = 140
-BP_UNCONTROLLED_DBP = 90
-
-
-def check_bp_flags(patient):
-    """
-    ตรวจ BP ของผู้ป่วย (ต้องการฟิลด์ 'bp_sbp' และ 'bp_dbp' เป็นตัวเลข)
-    - hypotension: safety, ผูกกับยาลดความดันแต่ละตัวที่สั่งอยู่
-    - uncontrolled: efficacy, flag รวม ไม่ผูกกับยาตัวใด ไม่แนะนำเปลี่ยนยา
-    """
-    sbp = patient.get("bp_sbp")
-    dbp = patient.get("bp_dbp")
-
-    try:
-        sbp = float(sbp)
-        dbp = float(dbp)
-    except (TypeError, ValueError):
-        return []
-
-    medicines = patient.get("medicines", []) or []
-    bp_display = "{}/{}".format(
-        int(sbp) if sbp.is_integer() else sbp,
-        int(dbp) if dbp.is_integer() else dbp,
-    )
-
-    results = []
-
-    if sbp < BP_HYPOTENSION_SBP or dbp < BP_HYPOTENSION_DBP:
-        antihypertensive_drugs_in_use = []
-        for medicine in medicines:
-            drug_name = str(medicine.get("name", "") or "").strip()
-            if not drug_name:
-                continue
-            atom = resolve_prolog_drug(drug_name)
-            if atom and atom in ANTIHYPERTENSIVE_ATOMS:
-                antihypertensive_drugs_in_use.append(drug_name)
-
-        for drug_name in antihypertensive_drugs_in_use:
-            results.append({
-                "Drug": drug_name,
-                "Lab": "BP",
-                "Value": bp_display,
-                "Type": "hypotension",
-                "Recommendation": (
-                    "ความดันต่ำ ({}) ร่วมกับการใช้ยาลดความดัน — เสี่ยง "
-                    "หน้ามืด/เป็นลม/perfusion ไม่พอ ควรพิจารณาลดขนาดหรือ"
-                    "หยุดยาชั่วคราว และประเมินอาการทางคลินิกก่อนจ่ายยาต่อ "
-                    "ตามดุลยพินิจแพทย์"
-                ).format(bp_display),
-            })
-
-    elif sbp >= BP_UNCONTROLLED_SBP or dbp >= BP_UNCONTROLLED_DBP:
-        has_any_antihypertensive = any(
-            resolve_prolog_drug(str(m.get("name", "") or "").strip()) in ANTIHYPERTENSIVE_ATOMS
-            for m in medicines
-            if str(m.get("name", "") or "").strip()
-        )
-
-        if has_any_antihypertensive:
-            results.append({
-                "Drug": "",
-                "Lab": "BP",
-                "Value": bp_display,
-                "Type": "uncontrolled",
-                "Recommendation": (
-                    "ความดันยังไม่ถึงเป้า ({}) แม้ใช้ยาลดความดันอยู่แล้ว "
-                    "ระบบไม่แนะนำปรับขนาดหรือเปลี่ยนยาโดยอัตโนมัติ เนื่องจาก"
-                    "การ titrate ยาต้องพิจารณา regimen ทั้งหมด ความสม่ำเสมอ"
-                    "การกินยา และสาเหตุอื่นร่วมด้วย — กรุณาให้แพทย์ทบทวน"
-                    "แผนการรักษา"
-                ).format(bp_display),
-            })
-
-    return results
-
-
-# ============================================================
-# DRUG ALLERGY CHECKING
-# ============================================================
-
-def check_drug_allergy(patient):
-    allergy_list = patient.get("drug_allergy") or []
-    if not allergy_list:
-        return []
-
-    normalized_allergies = [
-        (raw, normalize_drug_name(raw))
-        for raw in allergy_list
-        if normalize_drug_name(raw)
-    ]
-    if not normalized_allergies:
-        return []
-
-    medicines = patient.get("medicines", []) or []
-    results = []
-
-    for medicine in medicines:
-        drug_name = str(medicine.get("name", "") or "").strip()
-        if not drug_name:
-            continue
-
-        normalized_drug = normalize_drug_name(drug_name)
-        if not normalized_drug:
-            continue
-
-        for raw_allergy, normalized_allergy in normalized_allergies:
-            if normalized_allergy in normalized_drug or normalized_drug in normalized_allergy:
-                results.append({
-                    "Drug": drug_name,
-                    "Allergy_Matched": raw_allergy,
-                    "Note": (
-                        "ผู้ป่วยมีประวัติแพ้ยา '{}' ซึ่งตรงกับยาที่สั่งจ่าย "
-                        "ห้ามจ่ายจนกว่าแพทย์จะยืนยัน".format(raw_allergy)
-                    ),
-                })
-                break
-
-    return results
-
 
 def check_patient_drug_interactions(patient):
+    """
+    ตรวจ Drug Interaction เฉพาะยาที่มีช่วงการใช้ยาทับซ้อนกันจริง
+    โดยใช้วันที่/จำนวนยาจาก prescription เดิม และให้ Prolog ตรวจคู่ยา
+    """
     medicines = patient.get("medicines", []) or []
 
     if len(medicines) < 2:
@@ -1146,50 +911,54 @@ def check_patient_drug_interactions(patient):
     return check_drug_interactions(active_drug_names)
 
 
-def find_column(headers, possible_names):
+# ============================================================
+# FIND COLUMN
+# ============================================================
+
+def find_column(
+    headers,
+    possible_names
+):
+
     normalized_headers = {}
+
+
     for header in headers:
+
         if header is None:
+
             continue
-        key = str(header).strip().lower()
+
+
+        key = str(
+            header
+        ).strip().lower()
+
+
         normalized_headers[key] = header
 
+
     for name in possible_names:
-        key = str(name).strip().lower()
+
+        key = str(
+            name
+        ).strip().lower()
+
+
         if key in normalized_headers:
+
             return normalized_headers[key]
+
 
     return None
 
 
-def parse_icd10_list(value):
-    if value is None:
-        return []
-    text = str(value).strip()
-    if not text:
-        return []
-    import re
-    parts = re.split(r"[,;/]+", text)
-    return [p.strip() for p in parts if p.strip()]
-
-
-NO_ALLERGY_TEXTS = {"ไม่มี", "ไม่แพ้", "none", "no", "-", "nil", "n/a", "ไม่มีประวัติ"}
-
-
-def parse_allergy_list(value):
-    if value is None:
-        return []
-    text = str(value).strip()
-    if not text:
-        return []
-    if text.strip().lower() in NO_ALLERGY_TEXTS:
-        return []
-    import re
-    parts = re.split(r"[,;/]+", text)
-    return [p.strip() for p in parts if p.strip() and p.strip().lower() not in NO_ALLERGY_TEXTS]
-
+# ============================================================
+# DATE HELPERS
+# ============================================================
 
 def parse_date_value(value):
+    """แปลงวันที่จาก Excel/ข้อความ ทั้ง ค.ศ. และ พ.ศ. ให้เป็น datetime"""
     if value is None or value == "":
         return None
 
@@ -1199,6 +968,7 @@ def parse_date_value(value):
     if isinstance(value, date):
         return datetime.combine(value, datetime.min.time())
 
+    # Excel serial date
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         try:
             number = float(value)
@@ -1211,6 +981,7 @@ def parse_date_value(value):
     if not text:
         return None
 
+    # ตัดเวลาออกก่อน ถ้าเป็นข้อความแบบ 25/08/2569 00:00:00
     text = text.replace("\\", "/")
 
     formats = [
@@ -1225,12 +996,14 @@ def parse_date_value(value):
     for fmt in formats:
         try:
             result = datetime.strptime(text, fmt)
+            # ปี 2 หลัก/ปี พ.ศ. ให้แปลงเป็น ค.ศ. สำหรับการคำนวณ
             if result.year >= 2400:
                 result = result.replace(year=result.year - 543)
             return result
         except Exception:
             pass
 
+    # รองรับข้อความวันที่ที่มี พ.ศ. เช่น 25/08/2569
     import re
     m = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:\s+.*)?$", text)
     if m:
@@ -1253,6 +1026,7 @@ def format_date(value):
 
 
 def valid_date_value(value):
+    """คืนค่าวันที่เดิมเมื่อแปลงได้จริง มิฉะนั้นคืนค่าว่าง"""
     if value is None:
         return ""
     try:
@@ -1267,12 +1041,21 @@ def valid_date_value(value):
     return value
 
 
+# ============================================================
+# DATE SORT KEY
+# ============================================================
+
 def date_sort_key(value):
     parsed = parse_date_value(value)
     return parsed if parsed is not None else datetime.min
 
 
+# ============================================================
+# PARSE FREQUENCY / TIMES PER DAY
+# ============================================================
+
 def parse_times_per_day(value, default=1):
+    """แปลงครั้งต่อวันจาก Excel ให้เป็นตัวเลข แม้จะเขียนเป็น 1x, 1-0-1 หรือ วันละ 2 ครั้ง"""
     if value is None or value == "":
         return default
 
@@ -1287,15 +1070,18 @@ def parse_times_per_day(value, default=1):
     if not text:
         return default
 
+    # ตัวเลขตรง ๆ เช่น 1, 2, 3
     try:
         n = float(text)
         return int(n) if n.is_integer() else n
     except Exception:
         pass
 
+    # รูปแบบ 1-0-1 / 1-1-1 / 0-1-1 ให้รวมตัวเลขที่คั่นด้วย - หรือ /
     import re
     nums = re.findall(r"\d+(?:\.\d+)?", text)
     if ("-" in text or "/" in text or "x" in text) and nums:
+        # ถ้าเป็น 1x2 ให้ใช้เลขหลัง x; ถ้าเป็น 1-0-1 ให้รวมทุกช่วง
         if "x" in text and len(nums) >= 2:
             try:
                 return float(nums[-1])
@@ -1307,6 +1093,7 @@ def parse_times_per_day(value, default=1):
         except Exception:
             pass
 
+    # ข้อความ เช่น "วันละ 2 ครั้ง"
     if nums:
         try:
             n = float(nums[-1])
@@ -1317,54 +1104,116 @@ def parse_times_per_day(value, default=1):
     return default
 
 
+# ============================================================
+# CALCULATE DAYS
+# ============================================================
+
 def calculate_days_between(start_date, end_date):
+    """
+    คำนวณจำนวนวันจากวันที่จ่ายยา -> วันนัด
+    รองรับวันที่จาก Excel ทั้ง datetime/date, ค.ศ. และ พ.ศ.
+    เช่น 25/08/2569 -> 25/09/2569 = 31 วัน
+    """
+
     start = parse_date_value(start_date)
     end = parse_date_value(end_date)
 
+    # ถ้า parse_date_value อ่านไม่ได้
     if start is None or end is None:
+
+        # ลองแปลงวันที่จากข้อความโดยตรง
         try:
             import re
             from datetime import datetime
 
             def parse_thai_date(value):
+
                 if value is None:
                     return None
+
                 text = str(value).strip()
-                match = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", text)
+
+                match = re.search(
+                    r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})",
+                    text
+                )
+
                 if not match:
                     return None
+
                 day = int(match.group(1))
                 month = int(match.group(2))
                 year = int(match.group(3))
+
+                # พ.ศ. -> ค.ศ.
                 if year >= 2400:
                     year -= 543
-                return datetime(year, month, day)
+
+                return datetime(
+                    year,
+                    month,
+                    day
+                )
 
             if start is None:
                 start = parse_thai_date(start_date)
+
             if end is None:
                 end = parse_thai_date(end_date)
 
         except Exception as e:
-            print("ERROR PARSE DATE:", repr(e))
+            print(
+                "ERROR PARSE DATE:",
+                repr(e)
+            )
 
+    # ยังแปลงไม่ได้จริง ๆ
     if start is None or end is None:
-        print("คำนวณวันไม่ได้:", repr(start_date), "->", repr(end_date))
+        print(
+            "คำนวณวันไม่ได้:",
+            repr(start_date),
+            "->",
+            repr(end_date)
+        )
         return 0
 
-    days = (end.date() - start.date()).days
+    # คำนวณจำนวนวัน
+    days = (
+        end.date() - start.date()
+    ).days
 
     if days < 0:
         return 0
 
+    # วันเดียวกัน = 1 วัน
     return max(1, days)
 
 
+# ============================================================
+# CHECK DAYS SUPPLY
+# ============================================================
+
 def calculate_days_check(patient):
+    """
+    ตรวจสอบจำนวนยาให้สัมพันธ์กับช่วงวันที่จ่ายยา -> วันนัด
+
+    หลักการ:
+        required_days = วันนัด - วันที่จ่ายยา
+        expected_quantity = required_days x ครั้ง/วัน
+        missing_quantity = expected_quantity - จำนวนที่สั่ง  (กรณีขาด)
+        excess_quantity = จำนวนที่สั่ง - expected_quantity  (กรณีเกิน)
+
+    ระบบจะแจ้งเป็น "ขาดกี่เม็ด / เกินกี่เม็ด" ไม่ใช่เพียงจำนวนวัน
+    """
+
+    # คำนวณใหม่จากวันที่ของ HN นี้ทุกครั้ง ไม่ใช้ค่าค้างจากแถวอื่น
     dispense_date = patient.get("dispense_date_raw") or patient.get("dispense_date") or ""
     appointment_date = patient.get("appointment_date_raw") or patient.get("appointment_date") or ""
 
-    required_days = calculate_days_between(dispense_date, appointment_date)
+    required_days = calculate_days_between(
+        dispense_date,
+        appointment_date
+    )
     patient["required_days"] = required_days
 
     try:
@@ -1376,52 +1225,94 @@ def calculate_days_check(patient):
     has_problem = False
 
     for medicine in patient.get("medicines", []):
+
         try:
-            quantity = float(medicine.get("quantity", 0) or 0)
+            quantity = float(
+                medicine.get("quantity", 0) or 0
+            )
         except Exception:
             quantity = 0
+
         try:
-            times = float(medicine.get("times_per_day", 1) or 1)
+            times = float(
+                medicine.get("times_per_day", 1) or 1
+            )
         except Exception:
             times = 0
 
         missing_quantity = 0
         excess_quantity = 0
 
+        # ----------------------------------------------------
+        # INVALID DATE / FREQUENCY
+        # ----------------------------------------------------
         if required_days <= 0 or times <= 0:
+
             expected = 0
             decision = "consult"
             status = "คำนวณไม่ได้ — กรุณาตรวจสอบวันที่จ่าย/วันนัด/ครั้งต่อวัน"
             has_problem = True
+
         else:
+
+            # จำนวนเม็ดที่ควรจ่ายเพื่อให้ถึงวันนัด
             expected = required_days * times
 
             if quantity < expected:
+
                 missing_quantity = expected - quantity
                 excess_quantity = 0
                 decision = "increase"
-                status = "ขาด {} เม็ด".format(format_quantity(missing_quantity))
+                status = "ขาด {} เม็ด".format(
+                    format_quantity(missing_quantity)
+                )
                 has_problem = True
+
             elif quantity > expected:
+
                 missing_quantity = 0
                 excess_quantity = quantity - expected
                 decision = "decrease"
-                status = "เกิน {} เม็ด".format(format_quantity(excess_quantity))
+                status = "เกิน {} เม็ด".format(
+                    format_quantity(excess_quantity)
+                )
                 has_problem = True
+
             else:
+
                 decision = "correct"
                 status = "พอดี"
 
         expected_display = (
             int(expected)
-            if isinstance(expected, (int, float)) and float(expected).is_integer()
+            if isinstance(expected, (int, float))
+            and float(expected).is_integer()
             else expected
         )
 
-        quantity_display = int(quantity) if float(quantity).is_integer() else quantity
-        times_display = int(times) if float(times).is_integer() else times
-        missing_display = int(missing_quantity) if float(missing_quantity).is_integer() else missing_quantity
-        excess_display = int(excess_quantity) if float(excess_quantity).is_integer() else excess_quantity
+        quantity_display = (
+            int(quantity)
+            if float(quantity).is_integer()
+            else quantity
+        )
+
+        times_display = (
+            int(times)
+            if float(times).is_integer()
+            else times
+        )
+
+        missing_display = (
+            int(missing_quantity)
+            if float(missing_quantity).is_integer()
+            else missing_quantity
+        )
+
+        excess_display = (
+            int(excess_quantity)
+            if float(excess_quantity).is_integer()
+            else excess_quantity
+        )
 
         medicine["expected_quantity"] = expected_display
         medicine["missing_quantity"] = missing_display
@@ -1446,16 +1337,29 @@ def calculate_days_check(patient):
 
     patient["days_check_results"] = results
 
-    manual_decision = patient.get("_manual_days_decision")
+    # --------------------------------------------------------
+    # ถ้าแพทย์/ผู้มีอำนาจเคยพิจารณาแล้ว ให้ถือว่าผ่าน Consult
+    # --------------------------------------------------------
+    manual_decision = patient.get(
+        "_manual_days_decision"
+    )
 
-    if manual_decision in {"increase", "decrease", "correct", "override_doctor"}:
+    if manual_decision in {
+        "increase",
+        "decrease",
+        "correct",
+        "override_doctor"
+    }:
         patient["days_check_required"] = False
     else:
         patient["days_check_required"] = has_problem
 
+    # ข้อความสรุปสำหรับหน้าเว็บ / log / PDF
     problem_items = [
         item for item in results
-        if item.get("decision") in {"increase", "decrease", "consult"}
+        if item.get("decision") in {
+            "increase", "decrease", "consult"
+        }
     ]
 
     patient["days_supply_problem_count"] = len(problem_items)
@@ -1466,23 +1370,35 @@ def calculate_days_check(patient):
 
     for item in problem_items:
         try:
-            missing_total += float(item.get("missing_quantity", 0) or 0)
+            missing_total += float(
+                item.get("missing_quantity", 0) or 0
+            )
         except Exception:
             pass
         try:
-            excess_total += float(item.get("excess_quantity", 0) or 0)
+            excess_total += float(
+                item.get("excess_quantity", 0) or 0
+            )
         except Exception:
             pass
 
     patient["days_supply_missing_total"] = (
-        int(missing_total) if float(missing_total).is_integer() else missing_total
+        int(missing_total)
+        if float(missing_total).is_integer()
+        else missing_total
     )
     patient["days_supply_excess_total"] = (
-        int(excess_total) if float(excess_total).is_integer() else excess_total
+        int(excess_total)
+        if float(excess_total).is_integer()
+        else excess_total
     )
 
     return patient
 
+
+# ============================================================
+# FORMAT QUANTITY FOR DISPLAY
+# ============================================================
 
 def format_quantity(value):
     try:
@@ -1494,142 +1410,319 @@ def format_quantity(value):
         return str(value)
 
 
-def read_prescription_excel(file_path):
+# ============================================================
+# READ PRESCRIPTION EXCEL
+# ============================================================
+
+def read_prescription_excel(
+    file_path
+):
+
     patients = {}
 
-    wb = load_workbook(file_path, data_only=True)
+
+    wb = load_workbook(
+        file_path,
+        data_only=True
+    )
+
+
     ws = wb.active
 
-    rows = list(ws.iter_rows(values_only=True))
+
+    rows = list(
+        ws.iter_rows(
+            values_only=True
+        )
+    )
+
 
     if not rows:
+
         wb.close()
+
         return []
 
-    headers = list(rows[0])
 
-    hn_col = find_column(headers, ["HN", "hn", "Hospital Number", "hospital_number"])
-    name_col = find_column(headers, ["Name", "name", "Patient Name", "patient_name", "ชื่อ"])
-    age_col = find_column(headers, ["Age", "age", "อายุ"])
-    drug_col = find_column(headers, ["Drug", "drug", "Drug Name", "drug_name", "Medicine", "medicine", "ชื่อยา"])
-    strength_col = find_column(headers, ["Strength", "strength", "Dose", "dose", "ขนาดยา"])
-    times_col = find_column(headers, ["Times Per Day", "times_per_day", "times", "Frequency", "frequency", "ครั้งต่อวัน", "ครั้ง/วัน"])
-    quantity_col = find_column(headers, ["Quantity", "quantity", "Qty", "qty", "จำนวน"])
-    dispense_col = find_column(headers, ["Dispense Date", "dispense_date", "Date", "date", "วันที่จ่ายยา", "วันที่จ่าย", "วันจ่ายยา"])
-    appointment_col = find_column(headers, ["Appointment Date", "appointment_date", "Appointment", "appointment", "วันนัด", "วันที่นัด", "วันนัดหมาย"])
-    diagnosis_col = find_column(headers, ["Diagnosis", "diagnosis", "ICD10", "ICD-10", "icd10", "icd_10", "การวินิจฉัย", "รหัสโรค"])
-    egfr_col = find_column(headers, ["eGFR", "egfr", "GFR", "gfr", "ค่าไต", "การทำงานของไต"])
-    allergy_col = find_column(headers, ["แพ้ยา", "ประวัติแพ้ยา", "Allergy", "allergy", "Drug Allergy", "drug_allergy"])
+    headers = list(
+        rows[0]
+    )
 
-    # เพิ่มสำหรับ Lab-based dose adjustment (K+ / ALT) และ BP
-    potassium_col = find_column(headers, ["K", "K+", "Potassium", "potassium", "Serum K", "โพแทสเซียม", "ค่าโพแทสเซียม"])
-    alt_col = find_column(headers, ["ALT", "alt", "SGPT", "sgpt", "LFT", "lft", "การทำงานของตับ", "ค่าตับ"])
-    bp_col = find_column(headers, ["BP", "bp", "Blood Pressure", "blood_pressure", "ความดัน", "ความดันโลหิต"])
+
+    # ========================================================
+    # FIND COLUMNS
+    # ========================================================
+
+    hn_col = find_column(
+        headers,
+        [
+            "HN",
+            "hn",
+            "Hospital Number",
+            "hospital_number"
+        ]
+    )
+
+
+    name_col = find_column(
+        headers,
+        [
+            "Name",
+            "name",
+            "Patient Name",
+            "patient_name",
+            "ชื่อ"
+        ]
+    )
+
+
+    age_col = find_column(
+        headers,
+        [
+            "Age",
+            "age",
+            "อายุ"
+        ]
+    )
+
+
+    drug_col = find_column(
+        headers,
+        [
+            "Drug",
+            "drug",
+            "Drug Name",
+            "drug_name",
+            "Medicine",
+            "medicine",
+            "ชื่อยา"
+        ]
+    )
+
+
+    strength_col = find_column(
+        headers,
+        [
+            "Strength",
+            "strength",
+            "Dose",
+            "dose",
+            "ขนาดยา"
+        ]
+    )
+
+
+    times_col = find_column(
+        headers,
+        [
+            "Times Per Day",
+            "times_per_day",
+            "times",
+            "Frequency",
+            "frequency",
+            "ครั้งต่อวัน",
+            "ครั้ง/วัน"
+        ]
+    )
+
+
+    quantity_col = find_column(
+        headers,
+        [
+            "Quantity",
+            "quantity",
+            "Qty",
+            "qty",
+            "จำนวน"
+        ]
+    )
+
+
+    dispense_col = find_column(
+        headers,
+        [
+            "Dispense Date",
+            "dispense_date",
+            "Date",
+            "date",
+            "วันที่จ่ายยา",
+            "วันที่จ่าย",
+            "วันจ่ายยา"
+        ]
+    )
+
+
+    appointment_col = find_column(
+        headers,
+        [
+            "Appointment Date",
+            "appointment_date",
+            "Appointment",
+            "appointment",
+            "วันนัด",
+            "วันที่นัด",
+            "วันนัดหมาย"
+        ]
+    )
+
 
     if hn_col is None:
+
         wb.close()
-        raise ValueError("ไม่พบ column HN ในไฟล์ Excel")
+
+        raise ValueError(
+            "ไม่พบ column HN ในไฟล์ Excel"
+        )
+
+
+    # ========================================================
+    # READ DATA
+    # ========================================================
 
     for row in rows[1:]:
+
         row_dict = {}
 
+
         for i, header in enumerate(headers):
+
             if header is None:
+
                 continue
+
+
             if i < len(row):
+
                 row_dict[header] = row[i]
 
-        hn = row_dict.get(hn_col)
+
+        hn = row_dict.get(
+            hn_col
+        )
+
 
         if hn is None:
+
             continue
 
-        if isinstance(hn, float) and hn.is_integer():
-            hn = str(int(hn))
+
+        if (
+            isinstance(hn, float)
+            and
+            hn.is_integer()
+        ):
+
+            hn = str(
+                int(hn)
+            )
+
         else:
-            hn = str(hn).strip()
+
+            hn = str(
+                hn
+            ).strip()
+
 
         if not hn:
+
             continue
 
-        dispense_date_raw = valid_date_value(row_dict.get(dispense_col, "") if dispense_col else "")
-        appointment_date_raw = valid_date_value(row_dict.get(appointment_col, "") if appointment_col else "")
+
+        # ====================================================
+        # DATE ของแถวปัจจุบัน -- ต้องอ่านใหม่ทุกแถว
+        # เพื่อไม่ให้ HN หนึ่งใช้วันที่จากแถวก่อนหน้า/คนอื่น
+        # ====================================================
+        dispense_date_raw = valid_date_value(
+            row_dict.get(dispense_col, "") if dispense_col else ""
+        )
+        appointment_date_raw = valid_date_value(
+            row_dict.get(appointment_col, "") if appointment_col else ""
+        )
+
+        # ====================================================
+        # CREATE PATIENT
+        # ====================================================
 
         if hn not in patients:
+
             patient_name = ""
+
+
             if name_col:
-                value = row_dict.get(name_col, "")
+
+                value = row_dict.get(
+                    name_col,
+                    ""
+                )
+
+
                 if value is not None:
-                    patient_name = str(value)
+
+                    patient_name = str(
+                        value
+                    )
+
 
             age = ""
+
+
             if age_col:
-                value = row_dict.get(age_col, "")
+
+                value = row_dict.get(
+                    age_col,
+                    ""
+                )
+
+
                 if value is not None:
-                    age = str(value)
 
-            required_days = calculate_days_between(dispense_date_raw, appointment_date_raw)
+                    age = str(
+                        value
+                    )
 
-            diagnosis_icd10 = []
-            if diagnosis_col:
-                diagnosis_icd10 = parse_icd10_list(row_dict.get(diagnosis_col))
 
-            egfr_value = None
-            if egfr_col:
-                raw_egfr = row_dict.get(egfr_col)
-                try:
-                    if raw_egfr is not None and str(raw_egfr).strip() != "":
-                        egfr_value = float(raw_egfr)
-                except (TypeError, ValueError):
-                    egfr_value = None
+            required_days = calculate_days_between(
+                dispense_date_raw,
+                appointment_date_raw
+            )
 
-            potassium_value = None
-            if potassium_col:
-                raw_k = row_dict.get(potassium_col)
-                try:
-                    if raw_k is not None and str(raw_k).strip() != "":
-                        potassium_value = float(raw_k)
-                except (TypeError, ValueError):
-                    potassium_value = None
-
-            alt_value = None
-            if alt_col:
-                raw_alt = row_dict.get(alt_col)
-                try:
-                    if raw_alt is not None and str(raw_alt).strip() != "":
-                        alt_value = float(raw_alt)
-                except (TypeError, ValueError):
-                    alt_value = None
-
-            bp_sbp_value, bp_dbp_value = None, None
-            if bp_col:
-                bp_sbp_value, bp_dbp_value = parse_bp_value(row_dict.get(bp_col))
-
-            drug_allergy = []
-            if allergy_col:
-                drug_allergy = parse_allergy_list(row_dict.get(allergy_col))
 
             patients[hn] = {
+
                 "hn": hn,
+
                 "name": patient_name,
+
                 "age": age,
-                "dispense_date_raw": dispense_date_raw,
-                "appointment_date_raw": appointment_date_raw,
-                "dispense_date": format_date(dispense_date_raw),
-                "appointment_date": format_date(appointment_date_raw),
-                "required_days": required_days,
-                "diagnosis_icd10": diagnosis_icd10,
-                "egfr": egfr_value,
-                "potassium": potassium_value,
-                "alt": alt_value,
-                "bp_sbp": bp_sbp_value,
-                "bp_dbp": bp_dbp_value,
-                "drug_allergy": drug_allergy,
+
+                "dispense_date_raw":
+                    dispense_date_raw,
+
+                "appointment_date_raw":
+                    appointment_date_raw,
+
+                "dispense_date":
+                    format_date(
+                        dispense_date_raw
+                    ),
+
+                "appointment_date":
+                    format_date(
+                        appointment_date_raw
+                    ),
+
+                "required_days":
+                    required_days,
+
                 "medicines": [],
+
                 "interaction_results": []
+
             }
 
         else:
+            # HN เดิม: อัปเดตเฉพาะวันที่ของแถวนี้เมื่อเป็นวันที่ที่อ่านได้จริง
+            # แล้วคำนวณใหม่จากวันที่ของ HN เดียวกันทุกครั้ง
             patient = patients[hn]
 
             if dispense_date_raw:
@@ -1640,467 +1733,1635 @@ def read_prescription_excel(file_path):
                 patient["appointment_date_raw"] = appointment_date_raw
                 patient["appointment_date"] = format_date(appointment_date_raw)
 
-            dispense_date = patient.get("dispense_date_raw") or patient.get("dispense_date") or ""
-            appointment_date = patient.get("appointment_date_raw") or patient.get("appointment_date") or ""
+            dispense_date = (
+                patient.get("dispense_date_raw")
+                or patient.get("dispense_date")
+                or ""
+            )
+            appointment_date = (
+                patient.get("appointment_date_raw")
+                or patient.get("appointment_date")
+                or ""
+            )
 
-            required_days = calculate_days_between(dispense_date, appointment_date)
+            required_days = calculate_days_between(
+                dispense_date,
+                appointment_date
+            )
             patient["required_days"] = required_days
 
+
+        # ====================================================
+        # DRUG
+        # ====================================================
+
         drug_name = ""
+
+
         if drug_col:
-            value = row_dict.get(drug_col)
+
+            value = row_dict.get(
+                drug_col
+            )
+
+
             if value is not None:
-                drug_name = str(value).strip()
+
+                drug_name = str(
+                    value
+                ).strip()
+
 
         if not drug_name:
+
             continue
 
-        strength = ""
-        if strength_col:
-            value = row_dict.get(strength_col)
-            if value is not None:
-                strength = str(value)
 
-        times = parse_times_per_day(row_dict.get(times_col, 1) if times_col else 1, default=1)
+        # ====================================================
+        # STRENGTH
+        # ====================================================
+
+        strength = ""
+
+
+        if strength_col:
+
+            value = row_dict.get(
+                strength_col
+            )
+
+
+            if value is not None:
+
+                strength = str(
+                    value
+                )
+
+
+        # ====================================================
+        # TIMES
+        # ====================================================
+
+        times = parse_times_per_day(
+            row_dict.get(times_col, 1) if times_col else 1,
+            default=1
+        )
+
+
+        # ====================================================
+        # QUANTITY
+        # ====================================================
 
         quantity = 0
+
+
         if quantity_col:
-            value = row_dict.get(quantity_col)
+
+            value = row_dict.get(
+                quantity_col
+            )
+
+
             if value is not None:
+
                 try:
-                    quantity = float(value)
+
+                    quantity = float(
+                        value
+                    )
+
+
                     if quantity.is_integer():
-                        quantity = int(quantity)
+
+                        quantity = int(
+                            quantity
+                        )
+
+
                 except Exception:
+
                     quantity = 0
 
+
+        # ====================================================
+        # DAYS SUPPLY
+        # ====================================================
+
         days_supply = 0
+
+
         try:
-            numeric_quantity = float(quantity)
-            numeric_times = float(times)
+
+            numeric_quantity = float(
+                quantity
+            )
+
+
+            numeric_times = float(
+                times
+            )
+
+
             if numeric_times > 0:
-                days_supply = numeric_quantity / numeric_times
+
+                days_supply = (
+                    numeric_quantity
+                    /
+                    numeric_times
+                )
+
+
         except Exception:
+
             days_supply = 0
 
-        required_days = patients[hn]["required_days"]
+
+        # ====================================================
+        # INITIAL STATUS
+        # ====================================================
+
+        required_days = patients[hn][
+            "required_days"
+        ]
+
 
         if days_supply >= required_days:
+
             status = "เพียงพอ"
+
         else:
+
             status = "ไม่เพียงพอ"
 
+
         patients[hn]["medicines"].append({
+
             "name": drug_name,
+
             "strength": strength,
+
             "times_per_day": times,
+
             "quantity": quantity,
+
             "days_supply": days_supply,
+
             "status": status
+
         })
+
 
     wb.close()
 
+
+    # ========================================================
+    # INTERACTION
+    # ========================================================
+
     patient_results = []
 
-    for hn, patient in patients.items():
-        drug_names = [medicine["name"] for medicine in patient["medicines"]]
-        patient = calculate_days_check(patient)
-        patient["interaction_results"] = check_patient_drug_interactions(patient)
-        patient_results.append(patient)
 
-    patient_results.sort(key=lambda p: date_sort_key(p.get("dispense_date", "")))
+    for hn, patient in patients.items():
+
+        drug_names = [
+
+            medicine["name"]
+
+            for medicine
+            in patient["medicines"]
+
+        ]
+
+
+        # ====================================================
+        # CALCULATE DAYS FIRST
+        # ====================================================
+        # คำนวณวันที่จ่าย -> วันนัดของ HN นี้ก่อนทุกครั้ง
+        # เพื่อให้ตรวจสอบจำนวนยา/ช่วงวันของ HN นี้เสร็จก่อน
+        patient = calculate_days_check(patient)
+
+        # ====================================================
+        # INTERACTION CHECK AFTER DAYS CHECK
+        # ====================================================
+        patient["interaction_results"] = check_patient_drug_interactions(
+            patient
+        )
+
+
+        patient_results.append(
+            patient
+        )
+
+
+    # ========================================================
+    # SORT OLD → NEW
+    # ========================================================
+
+    patient_results.sort(
+
+        key=lambda p:
+        date_sort_key(
+            p.get(
+                "dispense_date",
+                ""
+            )
+        )
+
+    )
+
 
     return patient_results
 
 
+# ============================================================
+# LOAD STOCK
+# ============================================================
+
 def load_stock():
+
     stock_data = []
-    if not os.path.exists(STOCK_FILE):
+
+
+    if not os.path.exists(
+        STOCK_FILE
+    ):
+
         return stock_data
 
-    try:
-        wb = load_workbook(STOCK_FILE, data_only=True)
-        ws = wb.active
-        headers = [cell.value for cell in ws[1]]
 
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            if not any(value is not None for value in row):
+    try:
+
+        wb = load_workbook(
+            STOCK_FILE,
+            data_only=True
+        )
+
+
+        ws = wb.active
+
+
+        headers = [
+
+            cell.value
+
+            for cell in ws[1]
+
+        ]
+
+
+        for row in ws.iter_rows(
+            min_row=2,
+            values_only=True
+        ):
+
+            if not any(
+                value is not None
+                for value in row
+            ):
+
                 continue
+
+
             item = {}
+
+
             for i, header in enumerate(headers):
-                if header is not None and i < len(row):
+
+                if (
+                    header is not None
+                    and
+                    i < len(row)
+                ):
+
                     item[header] = row[i]
-            stock_data.append(item)
+
+
+            stock_data.append(
+                item
+            )
+
 
         wb.close()
 
+
     except Exception as e:
-        print("ERROR LOAD STOCK:", repr(e))
+
+        print(
+            "ERROR LOAD STOCK:",
+            repr(e)
+        )
+
 
     return stock_data
 
 
-def find_stock_item(drug_name, stock_data):
-    target = normalize_drug_name(drug_name)
+# ============================================================
+# FIND STOCK ITEM
+# ============================================================
+
+def find_stock_item(
+    drug_name,
+    stock_data
+):
+
+    target = normalize_drug_name(
+        drug_name
+    )
+
 
     stock_name_keys = [
-        "Generic_Name", "Generic Name", "generic_name", "ชื่อยา", "ชื่อยา Generic",
-        "Drug", "Drug Name", "Drug_Name", "Medicine", "Medicine Name"
+
+        "Generic_Name",
+
+        "Generic Name",
+
+        "generic_name",
+
+        "ชื่อยา",
+
+        "ชื่อยา Generic",
+
+        "Drug",
+
+        "Drug Name",
+
+        "Drug_Name",
+
+        "Medicine",
+
+        "Medicine Name"
+
     ]
 
+
     for item in stock_data:
+
         for key in stock_name_keys:
+
             if key not in item:
+
                 continue
-            stock_name = normalize_drug_name(item.get(key))
+
+
+            stock_name = normalize_drug_name(
+                item.get(key)
+            )
+
+
             if stock_name == target:
+
                 return item
+
 
     return None
 
 
-def find_stock_row(ws, drug_name):
-    headers = [cell.value for cell in ws[1]]
-    name_column = None
+# ============================================================
+# FIND STOCK ROW
+# ============================================================
 
-    possible_name_columns = [
-        "Generic_Name", "Generic Name", "generic_name", "ชื่อยา", "ชื่อยา Generic",
-        "Drug", "Drug Name", "Drug_Name", "Medicine", "Medicine Name"
+def find_stock_row(
+    ws,
+    drug_name
+):
+
+    headers = [
+        cell.value
+        for cell in ws[1]
     ]
 
-    for index, header in enumerate(headers, start=1):
+
+    name_column = None
+
+
+    possible_name_columns = [
+
+        "Generic_Name",
+
+        "Generic Name",
+
+        "generic_name",
+
+        "ชื่อยา",
+
+        "ชื่อยา Generic",
+
+        "Drug",
+
+        "Drug Name",
+
+        "Drug_Name",
+
+        "Medicine",
+
+        "Medicine Name"
+
+    ]
+
+
+    # ========================================================
+    # FIND DRUG NAME COLUMN
+    # ========================================================
+
+    for index, header in enumerate(
+        headers,
+        start=1
+    ):
+
         if header is None:
+
             continue
-        header_text = str(header).strip().lower()
+
+
+        header_text = str(
+            header
+        ).strip().lower()
+
+
         for possible in possible_name_columns:
-            possible_text = str(possible).strip().lower()
+
+            possible_text = str(
+                possible
+            ).strip().lower()
+
+
             if header_text == possible_text:
+
                 name_column = index
+
                 break
+
+
         if name_column is not None:
+
             break
 
+
     if name_column is None:
+
         return None, None
 
-    target = normalize_drug_name(drug_name)
 
-    for row_number in range(2, ws.max_row + 1):
-        value = ws.cell(row=row_number, column=name_column).value
-        stock_name = normalize_drug_name(value)
+    # ========================================================
+    # FIND DRUG ROW
+    # ========================================================
+
+    target = normalize_drug_name(
+        drug_name
+    )
+
+
+    for row_number in range(
+        2,
+        ws.max_row + 1
+    ):
+
+        value = ws.cell(
+            row=row_number,
+            column=name_column
+        ).value
+
+
+        stock_name = normalize_drug_name(
+            value
+        )
+
+
         if stock_name == target:
+
             return row_number, name_column
+
 
     return None, name_column
 
 
-def find_stock_quantity_column(ws):
-    headers = [cell.value for cell in ws[1]]
+# ============================================================
+# FIND STOCK QUANTITY COLUMN
+# ============================================================
 
-    possible_quantity_columns = [
-        "Quantity", "quantity", "Qty", "qty", "จำนวน", "จำนวนคงเหลือ", "คงเหลือ",
-        "Stock", "Stock Quantity", "stock_quantity"
+def find_stock_quantity_column(
+    ws
+):
+
+    headers = [
+
+        cell.value
+
+        for cell in ws[1]
+
     ]
 
-    for index, header in enumerate(headers, start=1):
+
+    possible_quantity_columns = [
+
+        "Quantity",
+
+        "quantity",
+
+        "Qty",
+
+        "qty",
+
+        "จำนวน",
+
+        "จำนวนคงเหลือ",
+
+        "คงเหลือ",
+
+        "Stock",
+
+        "Stock Quantity",
+
+        "stock_quantity"
+
+    ]
+
+
+    for index, header in enumerate(
+        headers,
+        start=1
+    ):
+
         if header is None:
+
             continue
-        header_text = str(header).strip().lower()
+
+
+        header_text = str(
+            header
+        ).strip().lower()
+
+
         for possible in possible_quantity_columns:
-            possible_text = str(possible).strip().lower()
+
+            possible_text = str(
+                possible
+            ).strip().lower()
+
+
             if header_text == possible_text:
+
                 return index
+
 
     return None
 
 
-def find_or_create_header(ws, header_name):
-    for column in range(1, ws.max_column + 1):
-        value = ws.cell(row=1, column=column).value
+# ============================================================
+# FIND OR CREATE HEADER
+# ============================================================
+
+def find_or_create_header(
+    ws,
+    header_name
+):
+
+    for column in range(
+        1,
+        ws.max_column + 1
+    ):
+
+        value = ws.cell(
+            row=1,
+            column=column
+        ).value
+
+
         if value is None:
+
             continue
-        if str(value).strip().lower() == str(header_name).strip().lower():
+
+
+        if str(
+            value
+        ).strip().lower() == str(
+            header_name
+        ).strip().lower():
+
             return column
 
+
     new_column = ws.max_column + 1
-    ws.cell(row=1, column=new_column, value=header_name)
+
+
+    ws.cell(
+        row=1,
+        column=new_column,
+        value=header_name
+    )
+
+
     return new_column
 
 
-def deduct_stock_from_excel(patient):
-    if not os.path.exists(STOCK_FILE):
-        print("ERROR: ไม่พบไฟล์ stock.xlsx")
+# ============================================================
+# DEDUCT STOCK FROM EXCEL
+# ============================================================
+
+def deduct_stock_from_excel(
+    patient
+):
+
+    """
+    หักจำนวนยาใน stock.xlsx
+
+    ก่อนหักจะตรวจสอบยาทุกตัวก่อน
+    ถ้ามียาตัวใดไม่พบหรือไม่พอ
+    จะไม่หัก Stock ตัวใดเลย
+    """
+
+
+    # ========================================================
+    # CHECK STOCK FILE
+    # ========================================================
+
+    if not os.path.exists(
+        STOCK_FILE
+    ):
+
+        print(
+            "ERROR: ไม่พบไฟล์ stock.xlsx"
+        )
+
         return False
+
 
     wb = None
 
+
     try:
-        wb = load_workbook(STOCK_FILE)
+
+        # ====================================================
+        # OPEN STOCK
+        # ====================================================
+
+        wb = load_workbook(
+            STOCK_FILE
+        )
+
+
         ws = wb.active
 
-        quantity_column = find_stock_quantity_column(ws)
+
+        # ====================================================
+        # FIND QUANTITY COLUMN
+        # ====================================================
+
+        quantity_column = (
+            find_stock_quantity_column(
+                ws
+            )
+        )
+
 
         if quantity_column is None:
-            raise ValueError("ไม่พบ Column Quantity ใน stock.xlsx")
 
-        last_dispensed_at_column = find_or_create_header(ws, "Last_Dispensed_At")
-        last_dispensed_quantity_column = find_or_create_header(ws, "Last_Dispensed_Quantity")
+            raise ValueError(
+                "ไม่พบ Column Quantity ใน stock.xlsx"
+            )
 
-        dispense_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        medicines = patient.get("medicines", [])
+        # ====================================================
+        # CREATE LOG COLUMNS
+        # ====================================================
+
+        last_dispensed_at_column = (
+            find_or_create_header(
+
+                ws,
+
+                "Last_Dispensed_At"
+
+            )
+        )
+
+
+        last_dispensed_quantity_column = (
+            find_or_create_header(
+
+                ws,
+
+                "Last_Dispensed_Quantity"
+
+            )
+        )
+
+
+        # ====================================================
+        # CURRENT DISPENSE TIME
+        # ====================================================
+
+        dispense_time = datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+
+        # ====================================================
+        # GET MEDICINES
+        # ====================================================
+
+        medicines = patient.get(
+            "medicines",
+            []
+        )
+
 
         if not medicines:
-            raise ValueError("ไม่พบรายการยาในใบสั่งยา")
+
+            raise ValueError(
+                "ไม่พบรายการยาในใบสั่งยา"
+            )
+
+
+        # ====================================================
+        # AGGREGATE SAME DRUG
+        #
+        # หากใบสั่งยามียาตัวเดียวกันหลายรายการ
+        # จะรวมจำนวนก่อนหัก
+        # ====================================================
 
         required_by_drug = {}
+
+
         display_names = {}
 
+
         for medicine in medicines:
-            drug_name = str(medicine.get("name", "")).strip()
+
+            drug_name = str(
+                medicine.get(
+                    "name",
+                    ""
+                )
+            ).strip()
+
 
             if not drug_name:
-                raise ValueError("พบรายการยาที่ไม่มีชื่อยา")
+
+                raise ValueError(
+                    "พบรายการยาที่ไม่มีชื่อยา"
+                )
+
 
             try:
-                required_quantity = float(medicine.get("quantity", 0) or 0)
+
+                required_quantity = float(
+                    medicine.get(
+                        "quantity",
+                        0
+                    ) or 0
+                )
+
+
             except Exception:
-                raise ValueError("จำนวนยาไม่ถูกต้อง: " + drug_name)
+
+                raise ValueError(
+                    "จำนวนยาไม่ถูกต้อง: "
+                    + drug_name
+                )
+
 
             if required_quantity <= 0:
-                raise ValueError("จำนวนยาต้องมากกว่า 0: " + drug_name)
 
-            normalized = normalize_drug_name(drug_name)
+                raise ValueError(
+                    "จำนวนยาต้องมากกว่า 0: "
+                    + drug_name
+                )
+
+
+            normalized = normalize_drug_name(
+                drug_name
+            )
+
 
             if normalized not in required_by_drug:
+
                 required_by_drug[normalized] = 0
 
-            required_by_drug[normalized] += required_quantity
-            display_names[normalized] = drug_name
+
+            required_by_drug[normalized] += (
+                required_quantity
+            )
+
+
+            display_names[normalized] = (
+                drug_name
+            )
+
+
+        # ====================================================
+        # VALIDATE ALL STOCK FIRST
+        # ====================================================
 
         deductions = []
 
-        for normalized_name, required_quantity in required_by_drug.items():
-            drug_name = display_names[normalized_name]
 
-            row_number, name_column = find_stock_row(ws, drug_name)
+        for normalized_name, required_quantity in (
+            required_by_drug.items()
+        ):
+
+            drug_name = display_names[
+                normalized_name
+            ]
+
+
+            row_number, name_column = (
+                find_stock_row(
+
+                    ws,
+
+                    drug_name
+
+                )
+            )
+
 
             if row_number is None:
-                raise ValueError("ไม่พบยาใน stock.xlsx: " + drug_name)
 
-            current_value = ws.cell(row=row_number, column=quantity_column).value
-
-            try:
-                current_quantity = float(current_value or 0)
-            except Exception:
-                raise ValueError("จำนวน Stock ไม่ถูกต้อง: " + drug_name)
-
-            if current_quantity < required_quantity:
                 raise ValueError(
-                    "Stock ไม่เพียงพอ: {} (เหลือ {}, ต้องใช้ {})".format(
-                        drug_name, current_quantity, required_quantity
-                    )
+                    "ไม่พบยาใน stock.xlsx: "
+                    + drug_name
                 )
 
-            new_quantity = current_quantity - required_quantity
+
+            # ------------------------------------------------
+            # CURRENT STOCK
+            # ------------------------------------------------
+
+            current_value = ws.cell(
+                row=row_number,
+                column=quantity_column
+            ).value
+
+
+            try:
+
+                current_quantity = float(
+                    current_value or 0
+                )
+
+
+            except Exception:
+
+                raise ValueError(
+                    "จำนวน Stock ไม่ถูกต้อง: "
+                    + drug_name
+                )
+
+
+            # ------------------------------------------------
+            # CHECK SUFFICIENT
+            # ------------------------------------------------
+
+            if current_quantity < required_quantity:
+
+                raise ValueError(
+
+                    "Stock ไม่เพียงพอ: {} "
+                    "(เหลือ {}, ต้องใช้ {})"
+
+                    .format(
+
+                        drug_name,
+
+                        current_quantity,
+
+                        required_quantity
+
+                    )
+
+                )
+
+
+            # ------------------------------------------------
+            # NEW STOCK
+            # ------------------------------------------------
+
+            new_quantity = (
+                current_quantity
+                -
+                required_quantity
+            )
+
 
             deductions.append({
-                "drug_name": drug_name,
-                "row": row_number,
-                "old_quantity": current_quantity,
-                "required_quantity": required_quantity,
-                "new_quantity": new_quantity
+
+                "drug_name":
+                    drug_name,
+
+                "row":
+                    row_number,
+
+                "old_quantity":
+                    current_quantity,
+
+                "required_quantity":
+                    required_quantity,
+
+                "new_quantity":
+                    new_quantity
+
             })
 
+
+        # ====================================================
+        # APPLY DEDUCTIONS
+        # ====================================================
+
         for item in deductions:
-            row_number = item["row"]
-            new_quantity = item["new_quantity"]
-            required_quantity = item["required_quantity"]
 
-            if float(new_quantity).is_integer():
-                new_quantity = int(new_quantity)
+            row_number = item[
+                "row"
+            ]
 
-            if float(required_quantity).is_integer():
-                required_quantity = int(required_quantity)
 
-            ws.cell(row=row_number, column=quantity_column, value=new_quantity)
-            ws.cell(row=row_number, column=last_dispensed_at_column, value=dispense_time)
-            ws.cell(row=row_number, column=last_dispensed_quantity_column, value=required_quantity)
+            new_quantity = item[
+                "new_quantity"
+            ]
 
-        wb.save(STOCK_FILE)
+
+            required_quantity = item[
+                "required_quantity"
+            ]
+
+
+            # ------------------------------------------------
+            # INTEGER FORMAT
+            # ------------------------------------------------
+
+            if float(
+                new_quantity
+            ).is_integer():
+
+                new_quantity = int(
+                    new_quantity
+                )
+
+
+            if float(
+                required_quantity
+            ).is_integer():
+
+                required_quantity = int(
+                    required_quantity
+                )
+
+
+            # ------------------------------------------------
+            # UPDATE QUANTITY
+            # ------------------------------------------------
+
+            ws.cell(
+
+                row=row_number,
+
+                column=quantity_column,
+
+                value=new_quantity
+
+            )
+
+
+            # ------------------------------------------------
+            # UPDATE DISPENSE TIME
+            # ------------------------------------------------
+
+            ws.cell(
+
+                row=row_number,
+
+                column=last_dispensed_at_column,
+
+                value=dispense_time
+
+            )
+
+
+            # ------------------------------------------------
+            # UPDATE DISPENSE QUANTITY
+            # ------------------------------------------------
+
+            ws.cell(
+
+                row=row_number,
+
+                column=last_dispensed_quantity_column,
+
+                value=required_quantity
+
+            )
+
+
+        # ====================================================
+        # SAVE STOCK
+        # ====================================================
+
+        wb.save(
+            STOCK_FILE
+        )
+
+
         wb.close()
+
         wb = None
+
+
+        # ====================================================
+        # PRINT LOG
+        # ====================================================
 
         print("")
         print("=" * 70)
         print("STOCK DEDUCTED SUCCESSFULLY")
-        print("Dispense Time:", dispense_time)
+        print(
+            "Dispense Time:",
+            dispense_time
+        )
+
 
         for item in deductions:
-            print("{} | {} -> {} | จ่าย {}".format(
-                item["drug_name"], item["old_quantity"], item["new_quantity"], item["required_quantity"]
-            ))
+
+            print(
+
+                "{} | {} -> {} | จ่าย {}"
+
+                .format(
+
+                    item["drug_name"],
+
+                    item["old_quantity"],
+
+                    item["new_quantity"],
+
+                    item["required_quantity"]
+
+                )
+
+            )
+
 
         print("=" * 70)
+
 
         return True
 
+
     except Exception as e:
+
         print("")
         print("=" * 70)
         print("ERROR DEDUCT STOCK")
-        print(repr(e))
+        print(
+            repr(e)
+        )
         print("=" * 70)
 
+
         if wb is not None:
+
             try:
+
                 wb.close()
+
             except Exception:
+
                 pass
+
 
         return False
 
 
-def check_stock_drug(drug_name, required_quantity=0):
+# ============================================================
+# CHECK STOCK FOR ONE DRUG
+# ============================================================
+
+def check_stock_drug(
+    drug_name,
+    required_quantity=0
+):
+
     stock_data = load_stock()
-    item = find_stock_item(drug_name, stock_data)
+
+
+    item = find_stock_item(
+        drug_name,
+        stock_data
+    )
+
+
+    # ========================================================
+    # NOT FOUND
+    # ========================================================
 
     if item is None:
+
         return {
+
             "found": False,
+
             "matched_name": drug_name,
+
             "strength": "",
+
             "dosage_form": "",
+
             "quantity": 0,
+
             "required": required_quantity,
+
             "unit": "",
+
             "min_stock": 0,
-            "status": "ไม่พบข้อมูลยาใน stock.xlsx"
+
+            "status":
+                "ไม่พบข้อมูลยาใน stock.xlsx"
+
         }
 
+
+    # ========================================================
+    # FIND QUANTITY
+    # ========================================================
+
     quantity = 0
+
+
     quantity_keys = [
-        "Quantity", "quantity", "Qty", "qty", "จำนวน", "จำนวนคงเหลือ", "คงเหลือ",
-        "Stock", "Stock Quantity", "stock_quantity"
+
+        "Quantity",
+
+        "quantity",
+
+        "Qty",
+
+        "qty",
+
+        "จำนวน",
+
+        "จำนวนคงเหลือ",
+
+        "คงเหลือ",
+
+        "Stock",
+
+        "Stock Quantity",
+
+        "stock_quantity"
+
     ]
 
+
     for key in quantity_keys:
+
         if key in item:
-            quantity = item.get(key)
+
+            quantity = item.get(
+                key
+            )
+
             break
 
+
     try:
-        current_quantity = float(quantity or 0)
+
+        current_quantity = float(
+            quantity or 0
+        )
+
     except Exception:
+
         current_quantity = 0
 
+
     try:
-        required = float(required_quantity or 0)
+
+        required = float(
+            required_quantity or 0
+        )
+
     except Exception:
+
         required = 0
 
+
+    # ========================================================
+    # STOCK STATUS
+    # ========================================================
+
     if current_quantity >= required:
+
         status = "มีเพียงพอ"
+
     else:
+
         status = "ยาใน Stock ไม่เพียงพอ"
 
+
+    # ========================================================
+    # MATCHED NAME
+    # ========================================================
+
     matched_name = drug_name
-    for key in ["Generic_Name", "Generic Name", "generic_name", "ชื่อยา", "ชื่อยา Generic",
-                "Drug", "Drug Name", "Drug_Name", "Medicine", "Medicine Name"]:
+
+
+    for key in [
+
+        "Generic_Name",
+
+        "Generic Name",
+
+        "generic_name",
+
+        "ชื่อยา",
+
+        "ชื่อยา Generic",
+
+        "Drug",
+
+        "Drug Name",
+
+        "Drug_Name",
+
+        "Medicine",
+
+        "Medicine Name"
+
+    ]:
+
         if key in item:
-            matched_name = item.get(key)
+
+            matched_name = item.get(
+                key
+            )
+
             break
+
+
+    # ========================================================
+    # STRENGTH
+    # ========================================================
 
     strength = ""
-    for key in ["Strength", "strength", "Dose", "dose", "ขนาดยา"]:
+
+
+    for key in [
+
+        "Strength",
+
+        "strength",
+
+        "Dose",
+
+        "dose",
+
+        "ขนาดยา"
+
+    ]:
+
         if key in item:
-            strength = item.get(key)
+
+            strength = item.get(
+                key
+            )
+
             break
+
+
+    # ========================================================
+    # DOSAGE FORM
+    # ========================================================
 
     dosage_form = ""
-    for key in ["Dosage_Form", "Dosage Form", "dosage_form", "รูปแบบยา"]:
+
+
+    for key in [
+
+        "Dosage_Form",
+
+        "Dosage Form",
+
+        "dosage_form",
+
+        "รูปแบบยา"
+
+    ]:
+
         if key in item:
-            dosage_form = item.get(key)
+
+            dosage_form = item.get(
+                key
+            )
+
             break
+
+
+    # ========================================================
+    # UNIT
+    # ========================================================
 
     unit = ""
-    for key in ["Unit", "unit", "หน่วย"]:
+
+
+    for key in [
+
+        "Unit",
+
+        "unit",
+
+        "หน่วย"
+
+    ]:
+
         if key in item:
-            unit = item.get(key)
+
+            unit = item.get(
+                key
+            )
+
             break
+
+
+    # ========================================================
+    # MIN STOCK
+    # ========================================================
 
     min_stock = 0
-    for key in ["Min_Stock", "Min Stock", "min_stock", "Minimum Stock", "ขั้นต่ำ"]:
+
+
+    for key in [
+
+        "Min_Stock",
+
+        "Min Stock",
+
+        "min_stock",
+
+        "Minimum Stock",
+
+        "ขั้นต่ำ"
+
+    ]:
+
         if key in item:
-            min_stock = item.get(key)
+
+            min_stock = item.get(
+                key
+            )
+
             break
 
+
     return {
+
         "found": True,
-        "matched_name": matched_name,
-        "strength": strength,
-        "dosage_form": dosage_form,
-        "quantity": current_quantity,
-        "required": required,
-        "unit": unit,
-        "min_stock": min_stock,
-        "status": status
+
+        "matched_name":
+            matched_name,
+
+        "strength":
+            strength,
+
+        "dosage_form":
+            dosage_form,
+
+        "quantity":
+            current_quantity,
+
+        "required":
+            required,
+
+        "unit":
+            unit,
+
+        "min_stock":
+            min_stock,
+
+        "status":
+            status
+
     }
 
 
-def check_patient_stock(patient):
+# ============================================================
+# CHECK PATIENT STOCK
+# ============================================================
+
+def check_patient_stock(
+    patient
+):
+
     results = []
 
-    for medicine in patient.get("medicines", []):
-        result = check_stock_drug(medicine.get("name", ""), medicine.get("quantity", 0))
+
+    for medicine in patient.get(
+        "medicines",
+        []
+    ):
+
+        result = check_stock_drug(
+
+            medicine.get(
+                "name",
+                ""
+            ),
+
+            medicine.get(
+                "quantity",
+                0
+            )
+
+        )
+
+
         results.append({
-            "name": medicine.get("name", ""),
-            "required": medicine.get("quantity", 0),
+
+            "name":
+                medicine.get(
+                    "name",
+                    ""
+                ),
+
+            "required":
+                medicine.get(
+                    "quantity",
+                    0
+                ),
+
             **result
+
         })
+
 
     return results
 
 
-def apply_stock_to_patient(patient):
-    stock_results = check_patient_stock(patient)
+# ============================================================
+# APPLY CURRENT STOCK STATUS TO MEDICINES
+# ============================================================
+
+def apply_stock_to_patient(
+    patient
+):
+
+    stock_results = check_patient_stock(
+        patient
+    )
+
+
     patient["stock_results"] = stock_results
 
-    for medicine in patient.get("medicines", []):
-        medicine_name = normalize_drug_name(medicine.get("name", ""))
+
+    for medicine in patient.get(
+        "medicines",
+        []
+    ):
+
+        medicine_name = normalize_drug_name(
+            medicine.get(
+                "name",
+                ""
+            )
+        )
+
 
         stock = None
+
+
         for item in stock_results:
-            stock_name = normalize_drug_name(item.get("name", ""))
+
+            stock_name = normalize_drug_name(
+                item.get(
+                    "name",
+                    ""
+                )
+            )
+
+
             if stock_name == medicine_name:
+
                 stock = item
+
                 break
 
+
+        # ====================================================
+        # NOT FOUND
+        # ====================================================
+
         if stock is None:
+
             medicine["stock_found"] = False
+
             medicine["stock_quantity"] = 0
-            medicine["stock_required"] = medicine.get("quantity", 0)
-            medicine["stock_status"] = "ไม่พบข้อมูลยาใน stock.xlsx"
+
+            medicine["stock_required"] = medicine.get(
+                "quantity",
+                0
+            )
+
+            medicine["stock_status"] = (
+                "ไม่พบข้อมูลยาใน stock.xlsx"
+            )
+
             medicine["status"] = "ไม่เพียงพอ"
+
             continue
 
-        medicine["stock_found"] = stock.get("found", False)
-        medicine["stock_quantity"] = stock.get("quantity", 0)
-        medicine["stock_required"] = stock.get("required", medicine.get("quantity", 0))
-        medicine["stock_status"] = stock.get("status", "")
-        medicine["stock_matched_name"] = stock.get("matched_name", medicine.get("name", ""))
-        medicine["stock_unit"] = stock.get("unit", "")
 
-        if stock.get("found", False) and stock.get("quantity", 0) >= stock.get("required", 0):
+        # ====================================================
+        # STOCK INFORMATION
+        # ====================================================
+
+        medicine["stock_found"] = stock.get(
+            "found",
+            False
+        )
+
+
+        medicine["stock_quantity"] = stock.get(
+            "quantity",
+            0
+        )
+
+
+        medicine["stock_required"] = stock.get(
+            "required",
+            medicine.get(
+                "quantity",
+                0
+            )
+        )
+
+
+        medicine["stock_status"] = stock.get(
+            "status",
+            ""
+        )
+
+
+        medicine["stock_matched_name"] = stock.get(
+            "matched_name",
+            medicine.get(
+                "name",
+                ""
+            )
+        )
+
+
+        medicine["stock_unit"] = stock.get(
+            "unit",
+            ""
+        )
+
+
+        # ====================================================
+        # STOCK STATUS
+        # ====================================================
+
+        if (
+
+            stock.get(
+                "found",
+                False
+            )
+
+            and
+
+            stock.get(
+                "quantity",
+                0
+            )
+
+            >=
+
+            stock.get(
+                "required",
+                0
+            )
+
+        ):
+
             medicine["status"] = "เพียงพอ"
+
         else:
+
             medicine["status"] = "ไม่เพียงพอ"
+
 
     return patient
 
 
+# ============================================================
+# SYNC PRESCRIPTION QUEUE FROM EXCEL
+# ============================================================
+
 def sync_prescription_queue_from_excel():
+    """
+    Sync Excel -> Queue โดยใช้ HN เป็นตัวหลัก
+
+    HN เดียวกันใน Excel จะถูกรวมเป็นผู้ป่วย 1 ราย
+    และส่ง dispense_date / appointment_date ของ HN นั้นไปพร้อมกันทุกครั้ง
+    """
     if not os.path.exists(PRESCRIPTION_SOURCE_FILE):
         return False
 
@@ -2128,6 +3389,7 @@ def sync_prescription_queue_from_excel():
                 if not hn:
                     continue
 
+                # HN เดิมซ้ำใน Queue -> รวมยาเข้ารายการแรกแล้วลบรายการซ้ำ
                 if hn in pending_by_hn:
                     keep = pending_by_hn[hn]
                     try:
@@ -2146,7 +3408,8 @@ def sync_prescription_queue_from_excel():
                     if not base.get("appointment_date"):
                         base["appointment_date"] = row["appointment_date"] or extra.get("appointment_date", "")
                     base["required_days"] = calculate_days_between(
-                        base.get("dispense_date", ""), base.get("appointment_date", "")
+                        base.get("dispense_date", ""),
+                        base.get("appointment_date", "")
                     )
 
                     conn.execute("""
@@ -2164,6 +3427,7 @@ def sync_prescription_queue_from_excel():
 
                 pending_by_hn[hn] = row
 
+            # ลบ/อัปเดตเฉพาะ pending ที่ตรงกับ Excel ปัจจุบัน
             for hn, row in list(pending_by_hn.items()):
                 if hn not in source_map:
                     conn.execute(
@@ -2190,6 +3454,7 @@ def sync_prescription_queue_from_excel():
                         row["id"]
                     ))
 
+            # เพิ่ม HN ใหม่ที่ยังไม่มีใน Queue
             for hn, patient in source_map.items():
                 if hn in pending_by_hn:
                     continue
@@ -2218,453 +3483,1366 @@ def sync_prescription_queue_from_excel():
         return False
 
 
+# ============================================================
+# GET PENDING PATIENTS
+# ============================================================
+
 def get_pending_patients():
+
+    # อ่าน Excel ล่าสุดทุกครั้งที่เรียก Queue
     sync_prescription_queue_from_excel()
 
     conn = get_db()
 
+
     try:
-        rows = conn.execute("""
-            SELECT id, hn, dispense_date, appointment_date, patient_json, created_at
+
+        rows = conn.execute(
+            """
+            SELECT
+                id,
+                hn,
+                dispense_date,
+                appointment_date,
+                patient_json,
+                created_at
             FROM prescription_queue
             WHERE status = 'pending'
             ORDER BY id ASC
-        """).fetchall()
+            """
+        ).fetchall()
+
     finally:
+
         conn.close()
+
 
     patients = []
 
+
     for row in rows:
+
         try:
-            patient = json.loads(row["patient_json"])
+
+            patient = json.loads(
+                row["patient_json"]
+            )
+
         except Exception:
+
             continue
 
+
         patient["queue_id"] = row["id"]
+
         patient["already_dispensed"] = False
 
+        # ใช้วันของ Queue รายการนี้โดยตรง
         patient["hn"] = str(row["hn"] or patient.get("hn", "")).strip()
         patient["dispense_date"] = str(row["dispense_date"] or patient.get("dispense_date", "")).strip()
         patient["appointment_date"] = str(row["appointment_date"] or patient.get("appointment_date", "")).strip()
         patient["required_days"] = calculate_days_between(
-            patient.get("dispense_date", ""), patient.get("appointment_date", "")
+            patient.get("dispense_date", ""),
+            patient.get("appointment_date", "")
         )
 
+        # ====================================================
+        # CHECK INTERACTION AGAIN
+        # ====================================================
+
+        drug_names = [
+
+            medicine.get(
+                "name",
+                ""
+            )
+
+            for medicine
+            in patient.get(
+                "medicines",
+                []
+            )
+
+        ]
+
+
+        # ====================================================
+        # CALCULATE DAYS FIRST
+        # ====================================================
+        # คำนวณวันที่จ่าย -> วันนัดของ HN นี้ก่อนทุกครั้ง
+        # เพื่อให้ตรวจสอบจำนวนยา/ช่วงวันของ HN นี้เสร็จก่อน
         patient = calculate_days_check(patient)
-        patient["interaction_results"] = check_patient_drug_interactions(patient)
-        patient = apply_stock_to_patient(patient)
 
-        patients.append(patient)
+        # ====================================================
+        # INTERACTION CHECK AFTER DAYS CHECK
+        # ====================================================
+        patient["interaction_results"] = check_patient_drug_interactions(
+            patient
+        )
 
-    patients.sort(key=lambda p: date_sort_key(p.get("dispense_date", "")))
+        # ====================================================
+        # CHECK CURRENT STOCK
+        # ====================================================
+
+        patient = apply_stock_to_patient(
+            patient
+        )
+
+
+        patients.append(
+            patient
+        )
+
+
+    # ========================================================
+    # OLD → NEW
+    # ========================================================
+
+    patients.sort(
+
+        key=lambda p:
+        date_sort_key(
+            p.get(
+                "dispense_date",
+                ""
+            )
+        )
+
+    )
+
 
     return patients
 
 
-def get_queue_patient(queue_id):
+# ============================================================
+# GET ONE QUEUE PATIENT
+# ============================================================
+
+def get_queue_patient(
+    queue_id
+):
+
     conn = get_db()
 
+
     try:
-        row = conn.execute("""
+
+        row = conn.execute(
+            """
             SELECT *
             FROM prescription_queue
             WHERE id = ?
             AND status = 'pending'
             LIMIT 1
-        """, (queue_id,)).fetchone()
+            """,
+            (
+                queue_id,
+            )
+        ).fetchone()
+
     finally:
+
         conn.close()
 
+
     if row is None:
+
         return None
 
+
     try:
-        patient = json.loads(row["patient_json"])
+
+        patient = json.loads(
+            row["patient_json"]
+        )
+
     except Exception:
+
         return None
+
 
     patient["queue_id"] = row["id"]
 
+    # ใช้วันที่จาก Queue ของ HN นี้โดยตรง
     patient["hn"] = str(row["hn"] or patient.get("hn", "")).strip()
     patient["dispense_date"] = str(row["dispense_date"] or patient.get("dispense_date", "")).strip()
     patient["appointment_date"] = str(row["appointment_date"] or patient.get("appointment_date", "")).strip()
     patient["required_days"] = calculate_days_between(
-        patient.get("dispense_date", ""), patient.get("appointment_date", "")
+        patient.get("dispense_date", ""),
+        patient.get("appointment_date", "")
     )
 
+
+    # ========================================================
+    # CHECK INTERACTION
+    # ========================================================
+
+    drug_names = [
+
+        medicine.get(
+            "name",
+            ""
+        )
+
+        for medicine
+        in patient.get(
+            "medicines",
+            []
+        )
+
+    ]
+
+
+    # ========================================================
+    # CALCULATE DAYS FIRST
+    # ========================================================
+    # ใช้ dispense_date / appointment_date ของ HN นี้โดยตรง
     patient = calculate_days_check(patient)
-    patient["interaction_results"] = check_patient_drug_interactions(patient)
-    patient = apply_stock_to_patient(patient)
+
+    # ========================================================
+    # CHECK INTERACTION AFTER DAYS CHECK
+    # ========================================================
+    patient["interaction_results"] = check_patient_drug_interactions(
+        patient
+    )
+
+    # ========================================================
+    # CHECK CURRENT STOCK
+    # ========================================================
+
+    patient = apply_stock_to_patient(
+        patient
+    )
+
 
     return patient
 
 
-def patient_stock_is_sufficient(patient):
-    stock_results = check_patient_stock(patient)
+# ============================================================
+# CHECK ALL STOCK SUFFICIENT
+# ============================================================
+
+def patient_stock_is_sufficient(
+    patient
+):
+
+    stock_results = check_patient_stock(
+        patient
+    )
+
 
     if not stock_results:
+
         return False
 
+
     for item in stock_results:
-        if not item.get("found", False):
+
+        if not item.get(
+            "found",
+            False
+        ):
+
             return False
-        if item.get("status") != "มีเพียงพอ":
+
+
+        if item.get(
+            "status"
+        ) != "มีเพียงพอ":
+
             return False
+
 
     return True
 
 
-def complete_queue_action(patient, decision, decision_text, substitute_drug="", queue_id=None):
+# ============================================================
+# COMPLETE QUEUE ACTION
+# ============================================================
+
+def complete_queue_action(
+    patient,
+    decision,
+    decision_text,
+    substitute_drug="",
+    queue_id=None
+):
+
     if queue_id is None:
+
         return False
 
-    hn = str(patient.get("hn", "")).strip()
 
-    original_drugs = ", ".join([str(medicine.get("name", "")) for medicine in patient.get("medicines", [])])
+    # ========================================================
+    # PATIENT INFORMATION
+    # ========================================================
 
-    interaction_count = len(patient.get("interaction_results", []))
+    hn = str(
+        patient.get(
+            "hn",
+            ""
+        )
+    ).strip()
 
+
+    original_drugs = ", ".join(
+
+        [
+
+            str(
+                medicine.get(
+                    "name",
+                    ""
+                )
+            )
+
+            for medicine
+            in patient.get(
+                "medicines",
+                []
+            )
+
+        ]
+
+    )
+
+
+    interaction_count = len(
+
+        patient.get(
+            "interaction_results",
+            []
+        )
+
+    )
+
+
+    # ========================================================
+    # STOCK MUST BE DEDUCTED?
+    #
+    # dispense = จ่ายยาปกติ
+    # original = Doctor ยืนยันใช้ยาเดิม
+    # override_doctor = ผู้จ่ายยืนยันแทนแพทย์ตามใบสั่งเดิม
+    #
+    # substitute / cancel = ไม่หักในระบบปัจจุบัน
+    # ========================================================
+
+    # หัก Stock เฉพาะการจ่ายยา/ยืนยันใช้ยาเดิม
+    # cancel และ substitute จะไม่หัก Stock
     should_deduct_stock = decision in {"dispense", "original", "override_doctor"}
+
+
+    # ========================================================
+    # CREATE STOCK BACKUP
+    # ========================================================
 
     stock_backup_path = None
 
+
     if should_deduct_stock:
-        if not os.path.exists(STOCK_FILE):
-            print("ERROR: ไม่พบ stock.xlsx")
+
+        if not os.path.exists(
+            STOCK_FILE
+        ):
+
+            print(
+                "ERROR: ไม่พบ stock.xlsx"
+            )
+
             return False
 
-        stock_backup_path = STOCK_FILE + ".backup"
+
+        stock_backup_path = (
+            STOCK_FILE
+            +
+            ".backup"
+        )
+
 
         try:
-            shutil.copyfile(STOCK_FILE, stock_backup_path)
+
+            shutil.copyfile(
+
+                STOCK_FILE,
+
+                stock_backup_path
+
+            )
+
+
         except Exception as e:
+
             print("")
             print("=" * 70)
             print("ERROR CREATE STOCK BACKUP")
-            print(repr(e))
+            print(
+                repr(e)
+            )
             print("=" * 70)
+
             return False
+
+
+    # ========================================================
+    # DATABASE
+    # ========================================================
 
     conn = get_db()
 
+
     try:
-        queue_row = conn.execute("""
+
+        # ====================================================
+        # CHECK QUEUE
+        # ====================================================
+
+        queue_row = conn.execute(
+
+            """
             SELECT id
             FROM prescription_queue
             WHERE id = ?
             AND status = 'pending'
             LIMIT 1
-        """, (queue_id,)).fetchone()
+            """,
+
+            (
+                queue_id,
+            )
+
+        ).fetchone()
+
 
         if queue_row is None:
+
             conn.rollback()
+
             return False
 
-        existing = conn.execute("""
+
+        # ====================================================
+        # CHECK HISTORY
+        # ====================================================
+
+        existing = conn.execute(
+
+            """
             SELECT id
             FROM medication_history
             WHERE queue_id = ?
             LIMIT 1
-        """, (queue_id,)).fetchone()
+            """,
+
+            (
+                queue_id,
+            )
+
+        ).fetchone()
+
 
         if existing is not None:
+
             conn.rollback()
+
             return False
 
+
+        # ====================================================
+        # DEDUCT STOCK
+        # ====================================================
+
         if should_deduct_stock:
-            stock_deducted = deduct_stock_from_excel(patient)
+
+            stock_deducted = (
+                deduct_stock_from_excel(
+                    patient
+                )
+            )
+
 
             if not stock_deducted:
+
                 conn.rollback()
 
-                if stock_backup_path and os.path.exists(stock_backup_path):
+
+                # --------------------------------------------
+                # RESTORE STOCK
+                # --------------------------------------------
+
+                if (
+                    stock_backup_path
+                    and
+                    os.path.exists(
+                        stock_backup_path
+                    )
+                ):
+
                     try:
-                        shutil.copyfile(stock_backup_path, STOCK_FILE)
+
+                        shutil.copyfile(
+
+                            stock_backup_path,
+
+                            STOCK_FILE
+
+                        )
+
                     except Exception as restore_error:
-                        print("ERROR RESTORE STOCK:", repr(restore_error))
+
+                        print(
+                            "ERROR RESTORE STOCK:",
+                            repr(
+                                restore_error
+                            )
+                        )
+
 
                 return False
 
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        conn.execute("""
+        # ====================================================
+        # CURRENT TIME
+        # ====================================================
+
+        current_time = datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+
+        # ====================================================
+        # INSERT HISTORY
+        # ====================================================
+
+        conn.execute(
+
+            """
             INSERT INTO medication_history (
-                queue_id, hn, patient_name, age, dispense_date, appointment_date,
-                decision, decision_text, original_drugs, substitute_drug,
-                interaction_count, dispensed_at
+                queue_id,
+                hn,
+                patient_name,
+                age,
+                dispense_date,
+                appointment_date,
+                decision,
+                decision_text,
+                original_drugs,
+                substitute_drug,
+                interaction_count,
+                dispensed_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            queue_id, hn, patient.get("name", ""), patient.get("age", ""),
-            patient.get("dispense_date", ""), patient.get("appointment_date", ""),
-            decision, decision_text, original_drugs, substitute_drug,
-            interaction_count, current_time
-        ))
+            """,
 
-        cursor = conn.execute("""
+            (
+
+                queue_id,
+
+                hn,
+
+                patient.get(
+                    "name",
+                    ""
+                ),
+
+                patient.get(
+                    "age",
+                    ""
+                ),
+
+                patient.get(
+                    "dispense_date",
+                    ""
+                ),
+
+                patient.get(
+                    "appointment_date",
+                    ""
+                ),
+
+                decision,
+
+                decision_text,
+
+                original_drugs,
+
+                substitute_drug,
+
+                interaction_count,
+
+                current_time
+
+            )
+
+        )
+
+
+        # ====================================================
+        # RESOLVE QUEUE
+        # ====================================================
+
+        cursor = conn.execute(
+
+            """
             UPDATE prescription_queue
-            SET status = 'resolved', resolved_at = ?
+            SET
+                status = 'resolved',
+                resolved_at = ?
             WHERE id = ?
             AND status = 'pending'
-        """, (current_time, queue_id))
+            """,
+
+            (
+
+                current_time,
+
+                queue_id
+
+            )
+
+        )
+
+
+        # ====================================================
+        # CHECK QUEUE UPDATE
+        # ====================================================
 
         if cursor.rowcount != 1:
+
             conn.rollback()
 
-            if stock_backup_path and os.path.exists(stock_backup_path):
+
+            # ----------------------------------------------
+            # RESTORE STOCK
+            # ----------------------------------------------
+
+            if (
+                stock_backup_path
+                and
+                os.path.exists(
+                    stock_backup_path
+                )
+            ):
+
                 try:
-                    shutil.copyfile(stock_backup_path, STOCK_FILE)
+
+                    shutil.copyfile(
+
+                        stock_backup_path,
+
+                        STOCK_FILE
+
+                    )
+
                 except Exception as restore_error:
-                    print("ERROR RESTORE STOCK:", repr(restore_error))
+
+                    print(
+                        "ERROR RESTORE STOCK:",
+                        repr(
+                            restore_error
+                        )
+                    )
+
 
             return False
 
+
+        # ====================================================
+        # COMMIT
+        # ====================================================
+
         conn.commit()
 
+
+        # ====================================================
+        # DELETE BACKUP
+        # ====================================================
+
         if stock_backup_path:
+
             try:
-                if os.path.exists(stock_backup_path):
-                    os.remove(stock_backup_path)
+
+                if os.path.exists(
+                    stock_backup_path
+                ):
+
+                    os.remove(
+                        stock_backup_path
+                    )
+
             except Exception as e:
-                print("WARNING DELETE BACKUP:", repr(e))
+
+                print(
+                    "WARNING DELETE BACKUP:",
+                    repr(e)
+                )
+
+
+        # ====================================================
+        # SUCCESS LOG
+        # ====================================================
 
         print("")
         print("=" * 70)
         print("QUEUE COMPLETED SUCCESSFULLY")
-        print("Queue ID:", queue_id)
-        print("HN:", hn)
-        print("Decision:", decision)
-        print("Dispensed At:", current_time)
+        print(
+            "Queue ID:",
+            queue_id
+        )
+        print(
+            "HN:",
+            hn
+        )
+        print(
+            "Decision:",
+            decision
+        )
+        print(
+            "Dispensed At:",
+            current_time
+        )
         print("=" * 70)
 
+
         return True
+
+
+    # ========================================================
+    # SQLITE INTEGRITY ERROR
+    # ========================================================
 
     except sqlite3.IntegrityError as e:
+
         conn.rollback()
 
-        if stock_backup_path and os.path.exists(stock_backup_path):
-            try:
-                shutil.copyfile(stock_backup_path, STOCK_FILE)
-            except Exception as restore_error:
-                print("ERROR RESTORE STOCK:", repr(restore_error))
 
-        print("ERROR COMPLETE QUEUE:", repr(e))
+        # ====================================================
+        # RESTORE STOCK
+        # ====================================================
+
+        if (
+            stock_backup_path
+            and
+            os.path.exists(
+                stock_backup_path
+            )
+        ):
+
+            try:
+
+                shutil.copyfile(
+
+                    stock_backup_path,
+
+                    STOCK_FILE
+
+                )
+
+            except Exception as restore_error:
+
+                print(
+                    "ERROR RESTORE STOCK:",
+                    repr(
+                        restore_error
+                    )
+                )
+
+
+        print(
+            "ERROR COMPLETE QUEUE:",
+            repr(e)
+        )
+
+
         return False
+
+
+    # ========================================================
+    # GENERAL ERROR
+    # ========================================================
 
     except Exception as e:
+
         conn.rollback()
 
-        if stock_backup_path and os.path.exists(stock_backup_path):
-            try:
-                shutil.copyfile(stock_backup_path, STOCK_FILE)
-            except Exception as restore_error:
-                print("ERROR RESTORE STOCK:", repr(restore_error))
 
-        print("ERROR COMPLETE QUEUE:", repr(e))
+        # ====================================================
+        # RESTORE STOCK
+        # ====================================================
+
+        if (
+            stock_backup_path
+            and
+            os.path.exists(
+                stock_backup_path
+            )
+        ):
+
+            try:
+
+                shutil.copyfile(
+
+                    stock_backup_path,
+
+                    STOCK_FILE
+
+                )
+
+            except Exception as restore_error:
+
+                print(
+                    "ERROR RESTORE STOCK:",
+                    repr(
+                        restore_error
+                    )
+                )
+
+
+        print(
+            "ERROR COMPLETE QUEUE:",
+            repr(e)
+        )
+
+
         return False
 
+
     finally:
+
         conn.close()
 
 
-def resolve_queue(queue_id):
+# ============================================================
+# OLD RESOLVE QUEUE
+# ============================================================
+
+def resolve_queue(
+    queue_id
+):
+
     conn = get_db()
 
+
     try:
-        cursor = conn.execute("""
+
+        cursor = conn.execute(
+            """
             UPDATE prescription_queue
-            SET status = 'resolved', resolved_at = ?
+            SET
+                status = 'resolved',
+                resolved_at = ?
             WHERE id = ?
             AND status = 'pending'
-        """, (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), queue_id))
+            """,
+            (
+                datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+
+                queue_id
+            )
+        )
+
 
         conn.commit()
+
+
         return cursor.rowcount > 0
 
+
     except Exception as e:
+
         conn.rollback()
-        print("ERROR RESOLVE QUEUE:", repr(e))
+
+        print(
+            "ERROR RESOLVE QUEUE:",
+            repr(e)
+        )
+
         return False
 
+
     finally:
+
         conn.close()
 
 
-def save_history(patient, decision, decision_text, substitute_drug="", queue_id=None):
+# ============================================================
+# SAVE HISTORY
+# ============================================================
+
+def save_history(
+    patient,
+    decision,
+    decision_text,
+    substitute_drug="",
+    queue_id=None
+):
+
     if queue_id is None:
+
         return False
 
-    hn = str(patient.get("hn", ""))
 
-    original_drugs = ", ".join([str(medicine.get("name", "")) for medicine in patient.get("medicines", [])])
+    hn = str(
+        patient.get(
+            "hn",
+            ""
+        )
+    )
 
-    interaction_count = len(patient.get("interaction_results", []))
+
+    original_drugs = ", ".join(
+
+        [
+
+            str(
+                medicine.get(
+                    "name",
+                    ""
+                )
+            )
+
+            for medicine
+            in patient.get(
+                "medicines",
+                []
+            )
+
+        ]
+
+    )
+
+
+    interaction_count = len(
+
+        patient.get(
+            "interaction_results",
+            []
+        )
+
+    )
+
 
     conn = get_db()
 
+
     try:
-        existing = conn.execute("""
-            SELECT id FROM medication_history WHERE queue_id = ? LIMIT 1
-        """, (queue_id,)).fetchone()
+
+        existing = conn.execute(
+            """
+            SELECT id
+            FROM medication_history
+            WHERE queue_id = ?
+            LIMIT 1
+            """,
+            (
+                queue_id,
+            )
+        ).fetchone()
+
 
         if existing is not None:
+
             return False
 
-        conn.execute("""
+
+        conn.execute(
+            """
             INSERT INTO medication_history (
-                queue_id, hn, patient_name, age, dispense_date, appointment_date,
-                decision, decision_text, original_drugs, substitute_drug,
-                interaction_count, dispensed_at
+                queue_id,
+                hn,
+                patient_name,
+                age,
+                dispense_date,
+                appointment_date,
+                decision,
+                decision_text,
+                original_drugs,
+                substitute_drug,
+                interaction_count,
+                dispensed_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            queue_id, hn, patient.get("name", ""), patient.get("age", ""),
-            patient.get("dispense_date", ""), patient.get("appointment_date", ""),
-            decision, decision_text, original_drugs, substitute_drug,
-            interaction_count, datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        ))
+            """,
+            (
+                queue_id,
+
+                hn,
+
+                patient.get(
+                    "name",
+                    ""
+                ),
+
+                patient.get(
+                    "age",
+                    ""
+                ),
+
+                patient.get(
+                    "dispense_date",
+                    ""
+                ),
+
+                patient.get(
+                    "appointment_date",
+                    ""
+                ),
+
+                decision,
+
+                decision_text,
+
+                original_drugs,
+
+                substitute_drug,
+
+                interaction_count,
+
+                datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+            )
+        )
+
 
         conn.commit()
+
+
         return True
 
+
     except Exception as e:
+
         conn.rollback()
-        print("ERROR SAVE HISTORY:", repr(e))
+
+        print(
+            "ERROR SAVE HISTORY:",
+            repr(e)
+        )
+
         return False
 
+
     finally:
+
         conn.close()
 
+
+# ============================================================
+# GET HISTORY
+# ============================================================
 
 def get_history():
+
     conn = get_db()
 
+
     try:
-        rows = conn.execute("SELECT * FROM medication_history ORDER BY id DESC").fetchall()
+
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM medication_history
+            ORDER BY id DESC
+            """
+        ).fetchall()
+
     finally:
+
         conn.close()
+
 
     return rows
 
 
+# ============================================================
+# THAI FONT
+# ============================================================
+
 def register_thai_fonts():
+
     normal_font = None
+
     bold_font = None
 
+
     possible_normal_fonts = [
+        os.path.join(BASE_DIR, "static", "fonts", "NotoSansThai-Regular.ttf"),
+        os.path.join(BASE_DIR, "static", "fonts", "THSarabunNew.ttf"),
+
         "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf",
         "/usr/share/fonts/opentype/noto/NotoSansThai-Regular.ttf",
+
         r"C:\Windows\Fonts\THSarabunNew.ttf",
+
         r"C:\Windows\Fonts\THSarabunNew_Regular.ttf",
+
         r"C:\Windows\Fonts\THSarabunNew-Regular.ttf",
+
         r"C:\Windows\Fonts\tahoma.ttf",
+
         r"C:\Windows\Fonts\arial.ttf",
+
         r"C:\Windows\Fonts\LeelawUI.ttf"
+
     ]
+
 
     possible_bold_fonts = [
+        os.path.join(BASE_DIR, "static", "fonts", "NotoSansThai-Bold.ttf"),
+        os.path.join(BASE_DIR, "static", "fonts", "THSarabunNew-Bold.ttf"),
+
         "/usr/share/fonts/truetype/noto/NotoSansThai-Bold.ttf",
         "/usr/share/fonts/opentype/noto/NotoSansThai-Bold.ttf",
+
         r"C:\Windows\Fonts\THSarabunNew-Bold.ttf",
+
         r"C:\Windows\Fonts\THSarabunNew_Bold.ttf",
+
         r"C:\Windows\Fonts\tahomabd.ttf",
+
         r"C:\Windows\Fonts\arialbd.ttf",
+
         r"C:\Windows\Fonts\LeelaUIb.ttf"
+
     ]
 
+
     for font_path in possible_normal_fonts:
-        if not os.path.exists(font_path):
+
+        if not os.path.exists(
+            font_path
+        ):
+
             continue
+
+
         try:
-            pdfmetrics.registerFont(TTFont("ThaiNormal", font_path))
+
+            pdfmetrics.registerFont(
+                TTFont(
+                    "ThaiNormal",
+                    font_path
+                )
+            )
+
+
             normal_font = "ThaiNormal"
+
             break
+
+
         except Exception:
+
             pass
+
 
     for font_path in possible_bold_fonts:
-        if not os.path.exists(font_path):
+
+        if not os.path.exists(
+            font_path
+        ):
+
             continue
+
+
         try:
-            pdfmetrics.registerFont(TTFont("ThaiBold", font_path))
+
+            pdfmetrics.registerFont(
+                TTFont(
+                    "ThaiBold",
+                    font_path
+                )
+            )
+
+
             bold_font = "ThaiBold"
+
             break
+
+
         except Exception:
+
             pass
 
+
     if normal_font is None:
+
+        print(
+            "WARNING: No Thai font file found (looked in {}). "
+            "Falling back to Helvetica, which cannot render Thai text - "
+            "Thai characters in the PDF will be blank. Place a Thai .ttf "
+            "font (e.g. NotoSansThai-Regular.ttf) in static/fonts/.".format(
+                os.path.join(BASE_DIR, "static", "fonts")
+            )
+        )
+
         normal_font = "Helvetica"
 
+
     if bold_font is None:
+
         bold_font = normal_font
+
 
     return normal_font, bold_font
 
 
-def draw_wrapped_text(pdf, text, x, y, max_chars=70, font="ThaiNormal", size=14, line_height=18):
+# ============================================================
+# DRAW WRAPPED TEXT
+# ============================================================
+
+def draw_wrapped_text(
+    pdf,
+    text,
+    x,
+    y,
+    max_chars=70,
+    font="ThaiNormal",
+    size=14,
+    line_height=18
+):
+
     if text is None:
+
         text = ""
 
-    text = str(text)
+
+    text = str(
+        text
+    )
+
 
     lines = []
 
+
     while len(text) > max_chars:
-        cut = text.rfind(" ", 0, max_chars)
+
+        cut = text.rfind(
+            " ",
+            0,
+            max_chars
+        )
+
+
         if cut <= 0:
+
             cut = max_chars
-        line = text[:cut].strip()
+
+
+        line = text[
+            :cut
+        ].strip()
+
+
         if line:
-            lines.append(line)
-        text = text[cut:].strip()
+
+            lines.append(
+                line
+            )
+
+
+        text = text[
+            cut:
+        ].strip()
+
 
     if text:
-        lines.append(text)
 
-    pdf.setFont(font, size)
+        lines.append(
+            text
+        )
+
+
+    pdf.setFont(
+        font,
+        size
+    )
+
 
     for line in lines:
-        pdf.drawString(x, y, line)
+
+        pdf.drawString(
+            x,
+            y,
+            line
+        )
+
+
         y -= line_height
+
 
     return y
 
+
+# ============================================================
+# SAVE UPDATED QUEUE PATIENT
+# ============================================================
 
 def update_queue_patient(queue_id, patient):
     conn = get_db()
 
     try:
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE prescription_queue
             SET patient_json = ?
             WHERE id = ? AND status = 'pending'
-        """, (json.dumps(patient, ensure_ascii=False, default=str), queue_id))
+            """,
+            (
+                json.dumps(
+                    patient,
+                    ensure_ascii=False,
+                    default=str
+                ),
+                queue_id
+            )
+        )
         conn.commit()
         return True
 
     except Exception as e:
         conn.rollback()
-        print("ERROR UPDATE QUEUE PATIENT:", repr(e))
+        print(
+            "ERROR UPDATE QUEUE PATIENT:",
+            repr(e)
+        )
         return False
 
     finally:
         conn.close()
 
 
+# ============================================================
+# CREATE DAYS SUPPLY CONSULT PDF
+# ============================================================
+
 def create_days_supply_consult_pdf(patient):
+    """
+    สร้าง Consult PDF จากข้อมูล patient ของ HN เดียวโดยตรง
+    รวมข้อมูลผู้ป่วย + รายการยาทั้งหมด + Days Supply + Drug Interaction
+    """
     try:
+        # --------------------------------------------------------
+        # 1) เตรียมข้อมูลผู้ป่วยจาก patient โดยตรง
+        # --------------------------------------------------------
         hn = str(patient.get("hn", "") or "").strip()
         patient_name = str(patient.get("name", "") or "").strip() or "ไม่ได้ระบุ"
         age = str(patient.get("age", "") or "").strip() or "ไม่ได้ระบุ"
 
         dispense_date = str(
-            patient.get("dispense_date", "") or patient.get("dispense_date_raw", "") or "ไม่ได้ระบุ"
+            patient.get("dispense_date", "")
+            or patient.get("dispense_date_raw", "")
+            or "ไม่ได้ระบุ"
         ).strip()
         appointment_date = str(
-            patient.get("appointment_date", "") or patient.get("appointment_date_raw", "") or "ไม่ได้ระบุ"
+            patient.get("appointment_date", "")
+            or patient.get("appointment_date_raw", "")
+            or "ไม่ได้ระบุ"
         ).strip()
 
+        # คำนวณใหม่จากวันที่ของ HN นี้ เพื่อไม่ใช้ค่าค้างจากผู้ป่วยคนอื่น
         calculate_days_check(patient)
         required_days = patient.get("required_days", 0) or 0
 
@@ -2672,10 +4850,14 @@ def create_days_supply_consult_pdf(patient):
         if not medicines:
             raise ValueError("ไม่พบรายการยาใน patient ของ HN {}".format(hn))
 
+        # --------------------------------------------------------
+        # 2) ตรวจ Interaction จากยาของ HN นี้โดยตรง
+        # --------------------------------------------------------
         drug_names = [
             str(m.get("name", "") or "").strip()
             for m in medicines
-            if str(m.get("name", "") or "").strip() and str(m.get("name", "") or "").strip() != "ไม่ได้ระบุ"
+            if str(m.get("name", "") or "").strip()
+            and str(m.get("name", "") or "").strip() != "ไม่ได้ระบุ"
         ]
         interactions = check_drug_interactions(drug_names) if len(drug_names) >= 2 else []
         if not interactions:
@@ -2683,15 +4865,20 @@ def create_days_supply_consult_pdf(patient):
         patient["interaction_results"] = interactions
 
         has_days_problem = bool(
-            patient.get("days_supply_has_problem", False) or patient.get("days_check_required", False)
+            patient.get("days_supply_has_problem", False)
+            or patient.get("days_check_required", False)
         )
         has_interaction = bool(interactions)
 
         if not has_days_problem and not has_interaction:
             return None
 
+        # --------------------------------------------------------
+        # 3) สร้าง PDF ใหม่ทุกครั้งจาก patient ล่าสุด
+        # --------------------------------------------------------
         filename = "Medication_Consult_HN_{}_{}.pdf".format(
-            hn.replace(" ", "_"), datetime.now().strftime("%Y%m%d_%H%M%S")
+            hn.replace(" ", "_"),
+            datetime.now().strftime("%Y%m%d_%H%M%S")
         )
         pdf_path = os.path.join(CONSULT_FOLDER, filename)
 
@@ -2710,13 +4897,17 @@ def create_days_supply_consult_pdf(patient):
             nonlocal y
             y = page_space(y, 55)
             pdf.setFont(font or normal_font, size)
-            y = draw_wrapped_text(pdf, str(text), x, y, 75, font or normal_font, size, leading)
+            y = draw_wrapped_text(pdf, str(text), x, y, 75,
+                                  font or normal_font, size, leading)
 
         def fmt(v, default="ไม่ได้ระบุ"):
             if v is None or str(v).strip() == "":
                 return default
             return format_quantity(v) if isinstance(v, (int, float)) else str(v)
 
+        # --------------------------------------------------------
+        # HEADER
+        # --------------------------------------------------------
         pdf.setFillColorRGB(0, 0, 0)
         pdf.setFont(bold_font, 22)
         pdf.drawCentredString(width / 2, y, "MEDICATION CONSULT")
@@ -2731,6 +4922,9 @@ def create_days_supply_consult_pdf(patient):
         pdf.drawCentredString(width / 2, y, subtitle)
         y -= 40
 
+        # --------------------------------------------------------
+        # PATIENT INFORMATION - ต้องใช้ค่าจริงจาก patient
+        # --------------------------------------------------------
         for label, value in [
             ("HN", hn or "ไม่ได้ระบุ"),
             ("ชื่อผู้ป่วย", patient_name),
@@ -2741,6 +4935,9 @@ def create_days_supply_consult_pdf(patient):
         ]:
             draw_line("{}: {}".format(label, value))
 
+        # --------------------------------------------------------
+        # DAYS SUPPLY - แสดงยาทุกตัวของ HN ไม่ใช่เฉพาะตัวที่ผิด
+        # --------------------------------------------------------
         if has_days_problem:
             y -= 15
             y = page_space(y, 100)
@@ -2748,8 +4945,12 @@ def create_days_supply_consult_pdf(patient):
             pdf.drawString(50, y, "1. DAYS SUPPLY")
             y -= 28
 
+            # ใช้ผลคำนวณล่าสุด จับคู่ด้วยชื่อยา
             results = patient.get("days_check_results", []) or []
-            result_by_name = {str(r.get("name", "") or "").strip().lower(): r for r in results}
+            result_by_name = {
+                str(r.get("name", "") or "").strip().lower(): r
+                for r in results
+            }
 
             for index, medicine in enumerate(medicines, start=1):
                 y = page_space(y, 180)
@@ -2757,6 +4958,7 @@ def create_days_supply_consult_pdf(patient):
                 key = name.lower()
                 item = result_by_name.get(key, {})
 
+                # ถ้าไม่มีผลใน days_check_results ให้คำนวณจาก medicine โดยตรง
                 strength = str(medicine.get("strength", "") or "").strip() or "ไม่ได้ระบุ"
                 times = item.get("times_per_day", medicine.get("times_per_day", ""))
                 qty = item.get("quantity", medicine.get("quantity", 0))
@@ -2805,6 +5007,9 @@ def create_days_supply_consult_pdf(patient):
 
                 y -= 8
 
+        # --------------------------------------------------------
+        # DRUG INTERACTION
+        # --------------------------------------------------------
         if has_interaction:
             y -= 15
             y = page_space(y, 150)
@@ -2844,6 +5049,9 @@ def create_days_supply_consult_pdf(patient):
                     draw_line("Reference: {}".format(reference), 70)
                 y -= 12
 
+        # --------------------------------------------------------
+        # DOCTOR OPINION
+        # --------------------------------------------------------
         y -= 10
         y = page_space(y, 190)
         pdf.setFont(bold_font, 17)
@@ -2882,7 +5090,8 @@ def create_days_supply_consult_pdf(patient):
 
         pdf.setFillColorRGB(0, 0, 0)
         pdf.setFont(normal_font, 9)
-        pdf.drawCentredString(width / 2, 25, "ระบบ Medication Management / Clinical Decision Support")
+        pdf.drawCentredString(width / 2, 25,
+                              "ระบบ Medication Management / Clinical Decision Support")
         pdf.save()
 
         return filename if os.path.exists(pdf_path) else None
@@ -2892,7 +5101,17 @@ def create_days_supply_consult_pdf(patient):
         return None
 
 
+# ============================================================
+# ENSURE DAYS SUPPLY CONSULT PDF
+# ============================================================
+
 def ensure_days_consult_pdf(patient, queue_id=None):
+    """
+    ตรวจว่ามีปัญหา Days Supply หรือ Drug Interaction
+    ถ้ามีอย่างใดอย่างหนึ่ง ให้สร้าง Consult PDF ใบเดียว
+    """
+    # ตรวจ interaction จากชื่อยาของ HN โดยตรงอีกครั้ง
+    # ก่อนตัดสินใจว่าจะสร้าง Consult PDF หรือไม่
     if not patient.get("interaction_results"):
         direct_drug_names = [
             str(m.get("name", "") or "").strip()
@@ -2903,23 +5122,34 @@ def ensure_days_consult_pdf(patient, queue_id=None):
             patient["interaction_results"] = check_drug_interactions(direct_drug_names)
 
     has_days_problem = bool(
-        patient.get("days_supply_has_problem", False) or patient.get("days_check_required", False)
+        patient.get("days_supply_has_problem", False)
+        or patient.get("days_check_required", False)
     )
-    has_interaction = bool(patient.get("interaction_results", []) or [])
+    has_interaction = bool(
+        patient.get("interaction_results", []) or []
+    )
 
     if not has_days_problem and not has_interaction:
         return patient
 
-    existing_filename = str(patient.get("days_consult_pdf", "") or "").strip()
+    existing_filename = str(
+        patient.get("days_consult_pdf", "") or ""
+    ).strip()
 
-    if existing_filename and os.path.exists(os.path.join(CONSULT_FOLDER, existing_filename)) and not has_interaction:
+    # ถ้ามี Interaction ให้สร้าง Consult ใหม่เสมอ เพื่อไม่ใช้ PDF เก่าที่เคยขึ้น
+    # "ไม่พบ Drug Interaction" ก่อนแก้ระบบ
+    if existing_filename and os.path.exists(
+        os.path.join(CONSULT_FOLDER, existing_filename)
+    ) and not has_interaction:
         return patient
 
     filename = create_days_supply_consult_pdf(patient)
 
     if filename:
         patient["days_consult_pdf"] = filename
-        patient["days_consult_created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        patient["days_consult_created_at"] = datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
 
         if queue_id is not None:
             update_queue_patient(queue_id, patient)
@@ -2927,44 +5157,133 @@ def ensure_days_consult_pdf(patient, queue_id=None):
     return patient
 
 
+# ============================================================
+# SAVE DAYS CONSULT PDF NAME
+# ============================================================
+
 def save_days_consult_pdf_name(queue_id, patient, filename):
     patient["days_consult_pdf"] = filename
-    patient["days_consult_created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    return update_queue_patient(queue_id, patient)
+    patient["days_consult_created_at"] = (
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
+    return update_queue_patient(
+        queue_id,
+        patient
+    )
 
 
-@app.route("/create-consult-pdf", methods=["POST"])
+# ============================================================
+# CREATE CONSULT PDF
+# ============================================================
+
+@app.route(
+    "/create-consult-pdf",
+    methods=["POST"]
+)
 def create_consult_pdf():
-    try:
-        hn = request.form.get("hn", "")
-        patient_name = request.form.get("patient_name", "")
-        age = request.form.get("age", "")
-        dispense_date = request.form.get("dispense_date", "")
-        appointment_date = request.form.get("appointment_date", "")
-        ward = request.form.get("ward", "ไม่ได้ระบุในข้อมูลใบสั่งยา")
-        diagnosis = request.form.get("diagnosis", "ไม่ได้ระบุในข้อมูลใบสั่งยา")
-        weight = request.form.get("weight", "ไม่ได้ระบุในข้อมูลใบสั่งยา")
-        height = request.form.get("height", "ไม่ได้ระบุในข้อมูลใบสั่งยา")
-        lab = request.form.get("lab", "ไม่ได้ระบุในข้อมูลใบสั่งยา")
-        renal_function = request.form.get("renal_function", "ไม่ได้ระบุในข้อมูลใบสั่งยา")
-        hepatic_function = request.form.get("hepatic_function", "ไม่ได้ระบุในข้อมูลใบสั่งยา")
 
+    try:
+
+        hn = request.form.get(
+            "hn",
+            ""
+        )
+
+
+        patient_name = request.form.get(
+            "patient_name",
+            ""
+        )
+
+
+        age = request.form.get(
+            "age",
+            ""
+        )
+
+
+        dispense_date = request.form.get(
+            "dispense_date",
+            ""
+        )
+
+
+        appointment_date = request.form.get(
+            "appointment_date",
+            ""
+        )
+
+
+        ward = request.form.get(
+            "ward",
+            "ไม่ได้ระบุในข้อมูลใบสั่งยา"
+        )
+
+
+        diagnosis = request.form.get(
+            "diagnosis",
+            "ไม่ได้ระบุในข้อมูลใบสั่งยา"
+        )
+
+
+        weight = request.form.get(
+            "weight",
+            "ไม่ได้ระบุในข้อมูลใบสั่งยา"
+        )
+
+
+        height = request.form.get(
+            "height",
+            "ไม่ได้ระบุในข้อมูลใบสั่งยา"
+        )
+
+
+        lab = request.form.get(
+            "lab",
+            "ไม่ได้ระบุในข้อมูลใบสั่งยา"
+        )
+
+
+        renal_function = request.form.get(
+            "renal_function",
+            "ไม่ได้ระบุในข้อมูลใบสั่งยา"
+        )
+
+
+        hepatic_function = request.form.get(
+            "hepatic_function",
+            "ไม่ได้ระบุในข้อมูลใบสั่งยา"
+        )
+
+
+        # ====================================================
+        # USE REAL PATIENT DATA FROM QUEUE BY HN
+        # ====================================================
         queue_medications = None
         queue_interactions = None
-        queue_patient = None
 
+        # ปุ่มสร้าง PDF จากหน้าตรวจยาบางเวอร์ชันส่งมาเฉพาะ HN/ชื่อ
+        # แต่ไม่ได้ส่งข้อมูลอายุ วันที่ และรายการยาครบ
+        # จึงต้องดึง patient_json ของ HN นี้จาก Queue โดยตรง
+        # เพื่อป้องกัน PDF ที่มีแต่หัวข้อ/แพทเทิร์น
+        queue_patient = None
         try:
             hn_lookup = str(hn or "").strip()
             if hn_lookup:
                 conn_lookup = get_db()
                 try:
-                    row_lookup = conn_lookup.execute("""
+                    row_lookup = conn_lookup.execute(
+                        """
                         SELECT id, hn, dispense_date, appointment_date, patient_json
                         FROM prescription_queue
-                        WHERE hn = ? AND status = 'pending'
-                        ORDER BY id DESC
+                        WHERE hn = ?
+                        ORDER BY
+                            CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
+                            id DESC
                         LIMIT 1
-                    """, (hn_lookup,)).fetchone()
+                        """,
+                        (hn_lookup,)
+                    ).fetchone()
                 finally:
                     conn_lookup.close()
 
@@ -2974,7 +5293,7 @@ def create_consult_pdf():
                     except Exception:
                         queue_patient = {}
 
-                    if queue_patient:
+                    if row_lookup is not None:
                         queue_patient["queue_id"] = row_lookup["id"]
                         queue_patient["hn"] = str(row_lookup["hn"] or queue_patient.get("hn", hn_lookup)).strip()
 
@@ -2983,54 +5302,16 @@ def create_consult_pdf():
                         if row_lookup["appointment_date"]:
                             queue_patient["appointment_date"] = str(row_lookup["appointment_date"]).strip()
 
+                        # คำนวณ Days Supply ใหม่จากข้อมูลของ HN นี้
                         queue_patient = calculate_days_check(queue_patient)
 
+                        # ใช้ข้อมูลจริงของผู้ป่วยแทนค่าที่ form ส่งมา
                         patient_name = str(queue_patient.get("name", "") or "").strip()
                         age = str(queue_patient.get("age", "") or "").strip()
                         dispense_date = str(queue_patient.get("dispense_date", "") or "").strip()
                         appointment_date = str(queue_patient.get("appointment_date", "") or "").strip()
 
-                        # --- FIX: ดึงข้อมูลคลินิกจริงจาก patient แทนการปล่อยให้เป็น
-                        # placeholder "ไม่ได้ระบุในข้อมูลใบสั่งยา" เสมอ (บั๊กเดิม: ฟิลด์
-                        # ward/diagnosis/weight/height/lab/renal/hepatic ไม่เคยถูกส่งมา
-                        # จากฟอร์ม จึงทำให้ PDF โชว์แต่ pattern ไม่มีข้อมูลจริง) ---
-                        if diagnosis in (None, "", "ไม่ได้ระบุในข้อมูลใบสั่งยา"):
-                            diagnosis_codes = queue_patient.get("diagnosis_icd10") or []
-                            if diagnosis_codes:
-                                diagnosis = ", ".join(
-                                    "{} ({})".format(
-                                        code, ICD10_LABELS.get(str(code).strip().lower(), "")
-                                    ).strip(" ()")
-                                    for code in diagnosis_codes
-                                )
-
-                        if renal_function in (None, "", "ไม่ได้ระบุในข้อมูลใบสั่งยา"):
-                            egfr_value = queue_patient.get("egfr")
-                            if egfr_value is not None:
-                                renal_function = "eGFR = {} ml/min/1.73m2".format(format_quantity(egfr_value))
-
-                        if hepatic_function in (None, "", "ไม่ได้ระบุในข้อมูลใบสั่งยา"):
-                            alt_value = queue_patient.get("alt")
-                            if alt_value is not None:
-                                hepatic_function = "ALT = {} U/L".format(format_quantity(alt_value))
-
-                        if lab in (None, "", "ไม่ได้ระบุในข้อมูลใบสั่งยา"):
-                            lab_parts = []
-                            if queue_patient.get("potassium") is not None:
-                                lab_parts.append("K+ = {} mEq/L".format(format_quantity(queue_patient.get("potassium"))))
-                            if queue_patient.get("egfr") is not None:
-                                lab_parts.append("eGFR = {} ml/min/1.73m2".format(format_quantity(queue_patient.get("egfr"))))
-                            if queue_patient.get("alt") is not None:
-                                lab_parts.append("ALT = {} U/L".format(format_quantity(queue_patient.get("alt"))))
-                            if queue_patient.get("bp_sbp") is not None and queue_patient.get("bp_dbp") is not None:
-                                lab_parts.append("BP = {}/{} mmHg".format(
-                                    format_quantity(queue_patient.get("bp_sbp")),
-                                    format_quantity(queue_patient.get("bp_dbp")),
-                                ))
-                            if lab_parts:
-                                lab = ", ".join(lab_parts)
-                        # --- END FIX ---
-
+                        # ใช้รายการยาจริงทั้งหมดจาก patient_json
                         real_medicines = queue_patient.get("medicines", []) or []
                         if real_medicines:
                             medications_from_patient = []
@@ -3050,6 +5331,7 @@ def create_consult_pdf():
                                 })
                             queue_medications = medications_from_patient
 
+                        # ใช้ Interaction จริงของ HN นี้
                         interactions_from_patient = queue_patient.get("interaction_results", []) or []
                         if not interactions_from_patient and len(real_medicines) >= 2:
                             interactions_from_patient = check_drug_interactions([
@@ -3061,26 +5343,78 @@ def create_consult_pdf():
         except Exception as queue_error:
             print("WARNING LOAD PATIENT FOR CONSULT PDF:", repr(queue_error))
 
+
         try:
-            interaction_count = int(request.form.get("interaction_count", 0))
+
+            interaction_count = int(
+                request.form.get(
+                    "interaction_count",
+                    0
+                )
+            )
+
         except Exception:
+
             interaction_count = 0
+
 
         interactions = []
 
+        # ถ้าเจอ HN ใน Queue ให้ใช้ Interaction จริงของ HN นั้น
+        # ไม่ใช้ค่าจาก form ที่อาจส่งมาไม่ครบหรือเป็นค่าว่าง
         if queue_interactions is not None:
             interactions = queue_interactions
         else:
-            for i in range(interaction_count):
+            for i in range(
+                interaction_count
+            ):
+
                 interactions.append({
-                    "Drug_1": request.form.get("drug1_{}".format(i), ""),
-                    "Drug_2": request.form.get("drug2_{}".format(i), ""),
-                    "Risk": request.form.get("risk_{}".format(i), ""),
-                    "Severity": request.form.get("severity_{}".format(i), ""),
-                    "Summary": request.form.get("summary_{}".format(i), ""),
-                    "Management": request.form.get("management_{}".format(i), ""),
-                    "Reference": request.form.get("reference_{}".format(i), "")
+
+                    "Drug_1":
+                        request.form.get(
+                            "drug1_{}".format(i),
+                            ""
+                        ),
+
+                    "Drug_2":
+                        request.form.get(
+                            "drug2_{}".format(i),
+                            ""
+                        ),
+
+                    "Risk":
+                        request.form.get(
+                            "risk_{}".format(i),
+                            ""
+                        ),
+
+                    "Severity":
+                        request.form.get(
+                            "severity_{}".format(i),
+                            ""
+                        ),
+
+                    "Summary":
+                        request.form.get(
+                            "summary_{}".format(i),
+                            ""
+                        ),
+
+                    "Management":
+                        request.form.get(
+                            "management_{}".format(i),
+                            ""
+                        ),
+
+                    "Reference":
+                        request.form.get(
+                            "reference_{}".format(i),
+                            ""
+                        )
+
                 })
+
 
         if not interactions:
             try:
@@ -3098,6 +5432,7 @@ def create_consult_pdf():
                 interactions = check_drug_interactions(form_drug_names)
 
         if not interactions:
+
             return """
             <html lang="th">
             <head>
@@ -3106,330 +5441,1086 @@ def create_consult_pdf():
             </head>
             <body>
                 <h2>ไม่พบข้อมูล Drug Interaction</h2>
-                <p>ไม่สามารถสร้าง Consult PDF เนื่องจากไม่มี Interaction</p>
-                <a href="/prescription-result">← กลับไปตรวจใบสั่งยา</a>
+                <p>
+                    ไม่สามารถสร้าง Consult PDF
+                    เนื่องจากไม่มี Interaction
+                </p>
+                <a href="/prescription-result">
+                    ← กลับไปตรวจใบสั่งยา
+                </a>
             </body>
             </html>
             """
 
+
+        # ====================================================
+        # MEDICATIONS
+        # ====================================================
+
         medications = []
 
+        # ใช้รายการยาจริงจาก patient_json ของ HN นี้ก่อน
         if queue_medications is not None:
             medications = queue_medications
 
+
         try:
-            medication_count = int(request.form.get("medication_count", 0))
+
+            medication_count = int(
+                request.form.get(
+                    "medication_count",
+                    0
+                )
+            )
+
         except Exception:
+
             medication_count = 0
 
+
         if queue_medications is None:
-            for i in range(medication_count):
+            for i in range(
+                medication_count
+            ):
+
                 medications.append({
-                    "name": request.form.get("med_name_{}".format(i), "ไม่ได้ระบุ"),
-                    "strength": request.form.get("med_strength_{}".format(i), "ไม่ได้ระบุ"),
-                    "frequency": request.form.get("med_frequency_{}".format(i), "ไม่ได้ระบุ"),
-                    "route": request.form.get("med_route_{}".format(i), "ไม่ได้ระบุ"),
-                    "start_date": request.form.get("med_start_date_{}".format(i), "ไม่ได้ระบุ"),
-                    "quantity": request.form.get("med_quantity_{}".format(i), "ไม่ได้ระบุ")
+                    "name": request.form.get(
+                        "med_name_{}".format(i), "ไม่ได้ระบุ"
+                    ),
+                    "strength": request.form.get(
+                        "med_strength_{}".format(i), "ไม่ได้ระบุ"
+                    ),
+                    "frequency": request.form.get(
+                        "med_frequency_{}".format(i), "ไม่ได้ระบุ"
+                    ),
+                    "route": request.form.get(
+                        "med_route_{}".format(i), "ไม่ได้ระบุ"
+                    ),
+                    "start_date": request.form.get(
+                        "med_start_date_{}".format(i), "ไม่ได้ระบุ"
+                    ),
+                    "quantity": request.form.get(
+                        "med_quantity_{}".format(i), "ไม่ได้ระบุ"
+                    )
                 })
 
+
+        # ====================================================
+        # FALLBACK
+        # ====================================================
+
         if not medications:
+
             added_names = set()
+
+
             for item in interactions:
-                for key in ["Drug_1", "Drug_2"]:
-                    drug = item.get(key, "")
-                    if drug and drug not in added_names:
+
+                for key in [
+                    "Drug_1",
+                    "Drug_2"
+                ]:
+
+                    drug = item.get(
+                        key,
+                        ""
+                    )
+
+
+                    if (
+                        drug
+                        and
+                        drug not in added_names
+                    ):
+
                         medications.append({
-                            "name": drug, "strength": "ไม่ได้ระบุ", "frequency": "ไม่ได้ระบุ",
-                            "route": "ไม่ได้ระบุ", "start_date": "ไม่ได้ระบุ", "quantity": "ไม่ได้ระบุ"
+
+                            "name": drug,
+
+                            "strength":
+                                "ไม่ได้ระบุ",
+
+                            "frequency":
+                                "ไม่ได้ระบุ",
+
+                            "route":
+                                "ไม่ได้ระบุ",
+
+                            "start_date":
+                                "ไม่ได้ระบุ",
+
+                            "quantity":
+                                "ไม่ได้ระบุ"
+
                         })
-                        added_names.add(drug)
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_hn = str(hn).replace(" ", "_")
-        filename = "Drug_Interaction_Consult_HN_{}_{}.pdf".format(safe_hn, timestamp)
-        pdf_path = os.path.join(CONSULT_FOLDER, filename)
 
-        normal_font, bold_font = register_thai_fonts()
-        pdf = canvas.Canvas(pdf_path, pagesize=A4)
+                        added_names.add(
+                            drug
+                        )
+
+
+        # ====================================================
+        # FILE
+        # ====================================================
+
+        timestamp = datetime.now().strftime(
+            "%Y%m%d_%H%M%S"
+        )
+
+
+        safe_hn = str(
+            hn
+        ).replace(
+            " ",
+            "_"
+        )
+
+
+        filename = (
+            "Drug_Interaction_Consult_HN_{}_{}.pdf"
+            .format(
+                safe_hn,
+                timestamp
+            )
+        )
+
+
+        pdf_path = os.path.join(
+            CONSULT_FOLDER,
+            filename
+        )
+
+
+        normal_font, bold_font = (
+            register_thai_fonts()
+        )
+
+
+        pdf = canvas.Canvas(
+            pdf_path,
+            pagesize=A4
+        )
+
+
         width, height = A4
 
+
         def new_page():
+
             pdf.showPage()
+
             return height - 50
+
 
         y = height - 50
 
-        pdf.setFont(bold_font, 22)
-        pdf.drawCentredString(width / 2, y, "DRUG INTERACTION CONSULT")
+
+        # ====================================================
+        # TITLE
+        # ====================================================
+
+        pdf.setFont(
+            bold_font,
+            22
+        )
+
+
+        pdf.drawCentredString(
+            width / 2,
+            y,
+            "DRUG INTERACTION CONSULT"
+        )
+
+
         y -= 30
-        pdf.setFont(bold_font, 18)
-        pdf.drawCentredString(width / 2, y, "บันทึกปรึกษาปัญหายาระหว่างยา")
+
+
+        pdf.setFont(
+            bold_font,
+            18
+        )
+
+
+        pdf.drawCentredString(
+            width / 2,
+            y,
+            "บันทึกปรึกษาปัญหายาระหว่างยา"
+        )
+
+
         y -= 45
 
-        pdf.setFont(bold_font, 17)
-        pdf.drawString(50, y, "1. หัวข้อการปรึกษา")
+
+        # ====================================================
+        # 1
+        # ====================================================
+
+        pdf.setFont(
+            bold_font,
+            17
+        )
+
+
+        pdf.drawString(
+            50,
+            y,
+            "1. หัวข้อการปรึกษา"
+        )
+
+
         y -= 28
+
 
         subject_text = (
-            "ขอปรึกษาเรื่อง Drug Interaction ในผู้ป่วย HN {} ระหว่างยา {} และ {}"
-        ).format(hn, interactions[0].get("Drug_1", ""), interactions[0].get("Drug_2", ""))
+            "ขอปรึกษาเรื่อง Drug Interaction "
+            "ในผู้ป่วย HN {} ระหว่างยา {} และ {}"
+        ).format(
 
-        y = draw_wrapped_text(pdf, subject_text, 60, y, 75, normal_font, 15, 20)
-        y -= 10
+            hn,
 
-        for text in [
-            "HN: {}".format(hn),
-            "ชื่อผู้ป่วย: {}".format(patient_name),
-            "อายุ: {}".format(age),
-            "วอร์ด/แผนก: {}".format(ward)
-        ]:
-            y = draw_wrapped_text(pdf, text, 60, y, 75, normal_font, 15, 20)
+            interactions[0].get(
+                "Drug_1",
+                ""
+            ),
 
-        if y < 180:
-            y = new_page()
-
-        y -= 15
-        pdf.setFont(bold_font, 17)
-        pdf.drawString(50, y, "2. ข้อมูลทางคลินิกที่สำคัญ")
-        y -= 28
-
-        clinical_items = [
-            "Diagnosis หลัก: {}".format(diagnosis),
-            "น้ำหนัก: {}".format(weight),
-            "ส่วนสูง: {}".format(height),
-            "Lab ที่เกี่ยวข้อง: {}".format(lab),
-            "การทำงานของไต: {}".format(renal_function),
-            "การทำงานของตับ: {}".format(hepatic_function),
-            "วันที่จ่ายยา: {}".format(dispense_date),
-            "วันนัด: {}".format(appointment_date)
-        ]
-
-        for text in clinical_items:
-            if y < 80:
-                y = new_page()
-            y = draw_wrapped_text(pdf, text, 60, y, 75, normal_font, 14, 19)
-
-        if y < 180:
-            y = new_page()
-
-        y -= 10
-        pdf.setFont(bold_font, 17)
-        pdf.drawString(50, y, "3. รายการยาปัจจุบันของผู้ป่วย")
-        y -= 28
-
-        for index, med in enumerate(medications):
-            if y < 150:
-                y = new_page()
-                pdf.setFont(bold_font, 17)
-                pdf.drawString(50, y, "3. รายการยาปัจจุบันของผู้ป่วย (ต่อ)")
-                y -= 28
-
-            y = draw_wrapped_text(
-                pdf, "{}. {}".format(index + 1, med.get("name", "ไม่ได้ระบุ")),
-                60, y, 70, bold_font, 15, 20
+            interactions[0].get(
+                "Drug_2",
+                ""
             )
 
+        )
+
+
+        y = draw_wrapped_text(
+            pdf,
+            subject_text,
+            60,
+            y,
+            75,
+            normal_font,
+            15,
+            20
+        )
+
+
+        y -= 10
+
+
+        for text in [
+
+            "HN: {}".format(
+                hn
+            ),
+
+            "ชื่อผู้ป่วย: {}".format(
+                patient_name
+            ),
+
+            "อายุ: {}".format(
+                age
+            ),
+
+            "วอร์ด/แผนก: {}".format(
+                ward
+            )
+
+        ]:
+
+            y = draw_wrapped_text(
+                pdf,
+                text,
+                60,
+                y,
+                75,
+                normal_font,
+                15,
+                20
+            )
+
+
+        # ====================================================
+        # 2
+        # ====================================================
+
+        if y < 180:
+
+            y = new_page()
+
+
+        y -= 15
+
+
+        pdf.setFont(
+            bold_font,
+            17
+        )
+
+
+        pdf.drawString(
+            50,
+            y,
+            "2. ข้อมูลทางคลินิกที่สำคัญ"
+        )
+
+
+        y -= 28
+
+
+        clinical_items = [
+
+            "Diagnosis หลัก: {}".format(
+                diagnosis
+            ),
+
+            "น้ำหนัก: {}".format(
+                weight
+            ),
+
+            "ส่วนสูง: {}".format(
+                height
+            ),
+
+            "Lab ที่เกี่ยวข้อง: {}".format(
+                lab
+            ),
+
+            "การทำงานของไต: {}".format(
+                renal_function
+            ),
+
+            "การทำงานของตับ: {}".format(
+                hepatic_function
+            ),
+
+            "วันที่จ่ายยา: {}".format(
+                dispense_date
+            ),
+
+            "วันนัด: {}".format(
+                appointment_date
+            )
+
+        ]
+
+
+        for text in clinical_items:
+
+            if y < 80:
+
+                y = new_page()
+
+
+            y = draw_wrapped_text(
+                pdf,
+                text,
+                60,
+                y,
+                75,
+                normal_font,
+                14,
+                19
+            )
+
+
+        # ====================================================
+        # 3
+        # ====================================================
+
+        if y < 180:
+
+            y = new_page()
+
+
+        y -= 10
+
+
+        pdf.setFont(
+            bold_font,
+            17
+        )
+
+
+        pdf.drawString(
+            50,
+            y,
+            "3. รายการยาปัจจุบันของผู้ป่วย"
+        )
+
+
+        y -= 28
+
+
+        for index, med in enumerate(
+            medications
+        ):
+
+            if y < 150:
+
+                y = new_page()
+
+
+                pdf.setFont(
+                    bold_font,
+                    17
+                )
+
+
+                pdf.drawString(
+                    50,
+                    y,
+                    "3. รายการยาปัจจุบันของผู้ป่วย (ต่อ)"
+                )
+
+
+                y -= 28
+
+
+            y = draw_wrapped_text(
+                pdf,
+                "{}. {}".format(
+                    index + 1,
+                    med.get(
+                        "name",
+                        "ไม่ได้ระบุ"
+                    )
+                ),
+                60,
+                y,
+                70,
+                bold_font,
+                15,
+                20
+            )
+
+
             for detail in [
-                "ขนาดยา: {}".format(med.get("strength", "ไม่ได้ระบุ")),
-                "วิธีใช้/ความถี่: {}".format(med.get("frequency", "ไม่ได้ระบุ")),
-                "Route: {}".format(med.get("route", "ไม่ได้ระบุ")),
-                "วันที่เริ่มยา: {}".format(med.get("start_date", "ไม่ได้ระบุ")),
-                "จำนวนยา: {}".format(med.get("quantity", "ไม่ได้ระบุ"))
+
+                "ขนาดยา: {}".format(
+                    med.get(
+                        "strength",
+                        "ไม่ได้ระบุ"
+                    )
+                ),
+
+                "วิธีใช้/ความถี่: {}".format(
+                    med.get(
+                        "frequency",
+                        "ไม่ได้ระบุ"
+                    )
+                ),
+
+                "Route: {}".format(
+                    med.get(
+                        "route",
+                        "ไม่ได้ระบุ"
+                    )
+                ),
+
+                "วันที่เริ่มยา: {}".format(
+                    med.get(
+                        "start_date",
+                        "ไม่ได้ระบุ"
+                    )
+                ),
+
+                "จำนวนยา: {}".format(
+                    med.get(
+                        "quantity",
+                        "ไม่ได้ระบุ"
+                    )
+                )
+
             ]:
-                y = draw_wrapped_text(pdf, detail, 75, y, 70, normal_font, 14, 18)
+
+                y = draw_wrapped_text(
+                    pdf,
+                    detail,
+                    75,
+                    y,
+                    70,
+                    normal_font,
+                    14,
+                    18
+                )
+
 
             y -= 8
 
+
+        # ====================================================
+        # 4
+        # ====================================================
+
         if y < 180:
+
             y = new_page()
 
-        pdf.setFont(bold_font, 17)
-        pdf.drawString(50, y, "4. ปัญหาและปฏิกิริยาระหว่างยาที่พบ")
+
+        pdf.setFont(
+            bold_font,
+            17
+        )
+
+
+        pdf.drawString(
+            50,
+            y,
+            "4. ปัญหาและปฏิกิริยาระหว่างยาที่พบ"
+        )
+
+
         y -= 28
 
-        for index, item in enumerate(interactions):
+
+        for index, item in enumerate(
+            interactions
+        ):
+
             if y < 180:
+
                 y = new_page()
-                pdf.setFont(bold_font, 17)
-                pdf.drawString(50, y, "4. ปัญหาและปฏิกิริยาระหว่างยา (ต่อ)")
+
+
+                pdf.setFont(
+                    bold_font,
+                    17
+                )
+
+
+                pdf.drawString(
+                    50,
+                    y,
+                    "4. ปัญหาและปฏิกิริยาระหว่างยา (ต่อ)"
+                )
+
+
                 y -= 28
 
+
             fields = [
-                "Interaction {}".format(index + 1),
-                "*** Drug 1: {} ***".format(item.get("Drug_1", "") or "ไม่ได้ระบุ"),
-                "*** Drug 2: {} ***".format(item.get("Drug_2", "") or "ไม่ได้ระบุ"),
-                "*** Risk: {} ***".format(item.get("Risk", "ไม่ได้ระบุ") or "ไม่ได้ระบุ"),
-                "*** Severity: {} ***".format(item.get("Severity", "ไม่ได้ระบุ") or "ไม่ได้ระบุ"),
-                "Clinical Significance: {}".format(item.get("Summary", "ไม่ได้ระบุ")),
-                "Reference: {}".format(item.get("Reference", "ไม่ได้ระบุ"))
+
+                "Interaction {}".format(
+                    index + 1
+                ),
+
+                "*** Drug 1: {} ***".format(
+                    item.get(
+                        "Drug_1",
+                        ""
+                    ) or "ไม่ได้ระบุ"
+                ),
+
+                "*** Drug 2: {} ***".format(
+                    item.get(
+                        "Drug_2",
+                        ""
+                    ) or "ไม่ได้ระบุ"
+                ),
+
+                "*** Risk: {} ***".format(
+                    item.get(
+                        "Risk",
+                        "ไม่ได้ระบุ"
+                    ) or "ไม่ได้ระบุ"
+                ),
+
+                "*** Severity: {} ***".format(
+                    item.get(
+                        "Severity",
+                        "ไม่ได้ระบุ"
+                    ) or "ไม่ได้ระบุ"
+                ),
+
+                "Clinical Significance: {}".format(
+                    item.get(
+                        "Summary",
+                        "ไม่ได้ระบุ"
+                    )
+                ),
+
+                "Reference: {}".format(
+                    item.get(
+                        "Reference",
+                        "ไม่ได้ระบุ"
+                    )
+                )
+
             ]
 
-            for field_index, text in enumerate(fields):
+
+            for field_index, text in enumerate(
+                fields
+            ):
+
                 if "***" in text:
                     pdf.setFillColorRGB(1, 0, 0)
                 else:
                     pdf.setFillColorRGB(0, 0, 0)
 
                 y = draw_wrapped_text(
-                    pdf, text, 60 if field_index == 0 else 70, y, 70,
-                    bold_font if field_index == 0 else normal_font, 14, 18
+                    pdf,
+                    text,
+                    60 if field_index == 0 else 70,
+                    y,
+                    70,
+                    bold_font if field_index == 0 else normal_font,
+                    14,
+                    18
                 )
                 pdf.setFillColorRGB(0, 0, 0)
 
+
             y -= 8
 
+
+        # ====================================================
+        # 5
+        # ====================================================
+
         if y < 180:
+
             y = new_page()
 
-        pdf.setFont(bold_font, 17)
-        pdf.drawString(50, y, "5. ข้อเสนอแนะทางเภสัชบำบัด")
-        y -= 28
 
-        for index, item in enumerate(interactions):
-            management = item.get("Management", "ไม่ได้ระบุ")
-            y = draw_wrapped_text(
-                pdf, "Interaction {}: {}".format(index + 1, management), 60, y, 70, normal_font, 14, 18
-            )
-            if y < 100:
-                y = new_page()
-
-        y -= 10
-        y = draw_wrapped_text(
-            pdf,
-            "การติดตาม: ควรพิจารณาติดตามอาการไม่พึงประสงค์ และผลตรวจทางห้องปฏิบัติการที่เกี่ยวข้อง "
-            "ตามความเหมาะสมของผู้ป่วย",
-            60, y, 70, normal_font, 14, 18
+        pdf.setFont(
+            bold_font,
+            17
         )
 
-        if y < 180:
-            y = new_page()
 
-        y -= 15
-        pdf.setFont(bold_font, 17)
-        pdf.drawString(50, y, "6. สรุปและลงชื่อผู้ปรึกษา")
+        pdf.drawString(
+            50,
+            y,
+            "5. ข้อเสนอแนะทางเภสัชบำบัด"
+        )
+
+
         y -= 28
 
-        conclusion = (
-            "พบข้อมูล Drug Interaction จำนวน {} รายการ จากฐานความรู้ของระบบ "
-            "จึงขอปรึกษาแพทย์เพื่อพิจารณา ความเหมาะสมของการใช้ยาร่วมกัน"
-        ).format(len(interactions))
 
-        y = draw_wrapped_text(pdf, conclusion, 60, y, 70, normal_font, 14, 18)
+        for index, item in enumerate(
+            interactions
+        ):
+
+            management = item.get(
+                "Management",
+                "ไม่ได้ระบุ"
+            )
+
+
+            y = draw_wrapped_text(
+                pdf,
+                "Interaction {}: {}".format(
+                    index + 1,
+                    management
+                ),
+                60,
+                y,
+                70,
+                normal_font,
+                14,
+                18
+            )
+
+
+            if y < 100:
+
+                y = new_page()
+
+
+        y -= 10
+
+
+        y = draw_wrapped_text(
+            pdf,
+            "การติดตาม: ควรพิจารณาติดตามอาการไม่พึงประสงค์ "
+            "และผลตรวจทางห้องปฏิบัติการที่เกี่ยวข้อง "
+            "ตามความเหมาะสมของผู้ป่วย",
+            60,
+            y,
+            70,
+            normal_font,
+            14,
+            18
+        )
+
+
+        # ====================================================
+        # 6
+        # ====================================================
+
+        if y < 180:
+
+            y = new_page()
+
+
+        y -= 15
+
+
+        pdf.setFont(
+            bold_font,
+            17
+        )
+
+
+        pdf.drawString(
+            50,
+            y,
+            "6. สรุปและลงชื่อผู้ปรึกษา"
+        )
+
+
+        y -= 28
+
+
+        conclusion = (
+            "พบข้อมูล Drug Interaction จำนวน {} รายการ "
+            "จากฐานความรู้ของระบบ "
+            "จึงขอปรึกษาแพทย์เพื่อพิจารณา "
+            "ความเหมาะสมของการใช้ยาร่วมกัน"
+        ).format(
+            len(interactions)
+        )
+
+
+        y = draw_wrapped_text(
+            pdf,
+            conclusion,
+            60,
+            y,
+            70,
+            normal_font,
+            14,
+            18
+        )
+
+
         y -= 25
 
+
         for text in [
+
             "ผู้ปรึกษา: ______________________________",
+
             "ตำแหน่ง: ภก. / นศ.ภ. ____________________",
+
             "วันที่: __________________________________",
+
             "ช่องทางติดต่อกลับ: _______________________"
+
         ]:
+
             if y < 60:
+
                 y = new_page()
-            pdf.setFont(normal_font, 14)
-            pdf.drawString(60, y, text)
+
+
+            pdf.setFont(
+                normal_font,
+                14
+            )
+
+
+            pdf.drawString(
+                60,
+                y,
+                text
+            )
+
+
             y -= 25
 
-        pdf.setFont(normal_font, 9)
-        pdf.drawCentredString(width / 2, 25, "ระบบ Medication Management / Clinical Decision Support")
+
+        # ====================================================
+        # FOOTER
+        # ====================================================
+
+        pdf.setFont(
+            normal_font,
+            9
+        )
+
+
+        pdf.drawCentredString(
+            width / 2,
+            25,
+            "ระบบ Medication Management / Clinical Decision Support"
+        )
+
+
         pdf.save()
 
-        if not os.path.exists(pdf_path):
-            raise Exception("ไม่พบไฟล์ PDF หลังจากสร้าง")
 
-        return render_template("consult_success.html", filename=filename)
+        if not os.path.exists(
+            pdf_path
+        ):
+
+            raise Exception(
+                "ไม่พบไฟล์ PDF หลังจากสร้าง"
+            )
+
+
+        return render_template(
+            "consult_success.html",
+            filename=filename
+        )
+
 
     except Exception as e:
+
         print("=" * 70)
         print("ERROR CREATE CONSULT PDF")
         print(repr(e))
         print("=" * 70)
 
-        return render_template("consult_success.html", filename=None, error=str(e))
+
+        return render_template(
+            "consult_success.html",
+            filename=None,
+            error=str(e)
+        )
 
 
-@app.route("/download-consult/<path:filename>")
+# ============================================================
+# DOWNLOAD CONSULT PDF
+# ============================================================
+
+@app.route(
+    "/download-consult/<path:filename>"
+)
 def download_consult(filename):
-    return send_from_directory(CONSULT_FOLDER, filename, as_attachment=True)
+
+    return send_from_directory(
+        CONSULT_FOLDER,
+        filename,
+        as_attachment=True
+    )
 
 
-@app.route("/prescription", methods=["GET", "POST"])
+# ============================================================
+# PRESCRIPTION UPLOAD
+# ============================================================
+
+@app.route(
+    "/prescription",
+    methods=["GET", "POST"]
+)
 def prescription():
-    if request.method == "GET":
-        return render_template("prescription.html")
 
-    uploaded_file = request.files.get("file")
+    if request.method == "GET":
+
+        return render_template(
+            "prescription.html"
+        )
+
+
+    uploaded_file = request.files.get(
+        "file"
+    )
+
 
     if uploaded_file is None:
-        return render_template("prescription.html", error="กรุณาเลือกไฟล์ Excel")
+
+        return render_template(
+            "prescription.html",
+            error="กรุณาเลือกไฟล์ Excel"
+        )
+
 
     if uploaded_file.filename == "":
-        return render_template("prescription.html", error="กรุณาเลือกไฟล์ Excel")
 
-    extension = os.path.splitext(uploaded_file.filename)[1].lower()
+        return render_template(
+            "prescription.html",
+            error="กรุณาเลือกไฟล์ Excel"
+        )
 
-    if extension not in [".xlsx", ".xlsm"]:
-        return render_template("prescription.html", error="กรุณาเลือกไฟล์ Excel (.xlsx หรือ .xlsm)")
+
+    extension = os.path.splitext(
+        uploaded_file.filename
+    )[1].lower()
+
+
+    if extension not in [
+        ".xlsx",
+        ".xlsm"
+    ]:
+
+        return render_template(
+            "prescription.html",
+            error="กรุณาเลือกไฟล์ Excel (.xlsx หรือ .xlsm)"
+        )
+
 
     temp_path = None
 
+
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
-            uploaded_file.save(temp_file.name)
+
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=extension
+        ) as temp_file:
+
+            uploaded_file.save(
+                temp_file.name
+            )
+
             temp_path = temp_file.name
 
-        shutil.copyfile(temp_path, PRESCRIPTION_SOURCE_FILE)
 
-        patient_results = read_prescription_excel(temp_path)
+        # เก็บ Excel ต้นฉบับไว้บน Server เพื่อให้ Queue Sync ได้แบบ Real-time
+        shutil.copyfile(
+            temp_path,
+            PRESCRIPTION_SOURCE_FILE
+        )
+
+        patient_results = read_prescription_excel(
+            temp_path
+        )
+
 
         if not patient_results:
-            return render_template("prescription.html", error="ไม่พบข้อมูลผู้ป่วยในไฟล์ Excel")
+
+            return render_template(
+                "prescription.html",
+                error="ไม่พบข้อมูลผู้ป่วยในไฟล์ Excel"
+            )
+
 
         added_count = 0
+
         duplicate_count = 0
 
+
         for patient in patient_results:
-            added = add_patient_to_queue(patient)
+
+            added = add_patient_to_queue(
+                patient
+            )
+
+
             if added:
+
                 added_count += 1
+
             else:
+
                 duplicate_count += 1
 
-        print("เพิ่มผู้ป่วยเข้า Queue:", added_count, "ราย")
-        print("ข้อมูลซ้ำ/ไม่เพิ่ม:", duplicate_count, "ราย")
 
-        return redirect(url_for("prescription_result"))
+        print(
+            "เพิ่มผู้ป่วยเข้า Queue:",
+            added_count,
+            "ราย"
+        )
+
+
+        print(
+            "ข้อมูลซ้ำ/ไม่เพิ่ม:",
+            duplicate_count,
+            "ราย"
+        )
+
+
+        return redirect(
+            url_for(
+                "prescription_result"
+            )
+        )
+
 
     except Exception as e:
-        print("ERROR READING PRESCRIPTION EXCEL:", repr(e))
-        return render_template("prescription.html", error=("เกิดข้อผิดพลาดในการอ่าน Excel: " + str(e)))
+
+        print(
+            "ERROR READING PRESCRIPTION EXCEL:",
+            repr(e)
+        )
+
+
+        return render_template(
+            "prescription.html",
+            error=(
+                "เกิดข้อผิดพลาดในการอ่าน Excel: "
+                + str(e)
+            )
+        )
+
 
     finally:
+
         if temp_path:
+
             try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
+
+                if os.path.exists(
+                    temp_path
+                ):
+
+                    os.remove(
+                        temp_path
+                    )
+
             except Exception:
+
                 pass
 
 
-def add_patient_to_queue(patient):
-    hn = str(patient.get("hn", "")).strip()
-    dispense_date = str(patient.get("dispense_date", "")).strip()
+# ============================================================
+# ADD PATIENT TO QUEUE
+# ============================================================
+
+def add_patient_to_queue(
+    patient
+):
+
+    hn = str(
+        patient.get(
+            "hn",
+            ""
+        )
+    ).strip()
+
+
+    dispense_date = str(
+        patient.get(
+            "dispense_date",
+            ""
+        )
+    ).strip()
+
 
     if not hn:
+
         return False
+
 
     conn = get_db()
 
+
     try:
-        existing = conn.execute("""
-            SELECT id FROM prescription_queue WHERE hn = ? AND status = 'pending' LIMIT 1
-        """, (hn,)).fetchone()
+
+        existing = conn.execute(
+            """
+            SELECT id
+            FROM prescription_queue
+            WHERE hn = ?
+            AND status = 'pending'
+            LIMIT 1
+            """,
+            (hn,)
+        ).fetchone()
+
 
         if existing is not None:
+
             return False
 
+
+        # ----------------------------------------------------
+        # สร้าง Days Supply Consult ตั้งแต่ตอนเพิ่มเข้า Queue
+        # เพื่อให้หน้าแสดงผลมีข้อมูลแจ้งเตือนและปุ่มดาวน์โหลดทันที
+        # ----------------------------------------------------
         if (
             patient.get("days_supply_has_problem", False)
             or patient.get("days_check_required", False)
@@ -3438,34 +6529,76 @@ def add_patient_to_queue(patient):
             pdf_filename = create_days_supply_consult_pdf(patient)
             if pdf_filename:
                 patient["days_consult_pdf"] = pdf_filename
-                patient["days_consult_created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                patient["days_consult_created_at"] = datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
 
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO prescription_queue (
-                hn, dispense_date, appointment_date, patient_json, status, created_at
+                hn,
+                dispense_date,
+                appointment_date,
+                patient_json,
+                status,
+                created_at
             )
             VALUES (?, ?, ?, ?, 'pending', ?)
-        """, (
-            hn, dispense_date, str(patient.get("appointment_date", "") or "").strip(),
-            json.dumps(patient, ensure_ascii=False, default=str),
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        ))
+            """,
+            (
+                hn,
+                dispense_date,
+                str(patient.get("appointment_date", "") or "").strip(),
+                json.dumps(
+                    patient,
+                    ensure_ascii=False,
+                    default=str
+                ),
+                datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+            )
+        )
+
 
         conn.commit()
+
+
         return True
 
+
     except sqlite3.IntegrityError:
+
         conn.rollback()
+
         return False
+
 
     except Exception as e:
+
         conn.rollback()
-        print("ERROR ADD QUEUE:", repr(e))
+
+        print(
+            "ERROR ADD QUEUE:",
+            repr(e)
+        )
+
         return False
 
+
     finally:
+
         conn.close()
 
+
+# ============================================================
+# PRESCRIPTION RESULT / QUEUE
+# ============================================================
+
+
+# ============================================================
+# NEW UNIFIED PRESCRIPTION RESULT PAGE
+# ============================================================
 
 UNIFIED_RESULT_TEMPLATE = r"""
 <!doctype html>
@@ -3515,7 +6648,7 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
     <table>
       <thead><tr>
         <th>ลำดับ</th><th>ชื่อยา</th><th>ขนาดยา</th><th>ครั้ง/วัน</th>
-        <th>จำนวนที่ต้องจ่าย</th><th>จำนวนวันที่ใช้ได้</th>
+        <th>จำนวนที่สั่งจ่าย</th><th>จำนวนที่ต้องจ่ายจริง</th>
         <th>Stock ปัจจุบัน</th><th>สถานะ Stock</th><th>ผลตรวจ</th>
       </tr></thead>
       <tbody>
@@ -3526,7 +6659,7 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
         <td>{{ m.strength or '-' }}</td>
         <td>{{ m.times_per_day }}</td>
         <td>{{ m.quantity }}</td>
-        <td>{{ ('%.1f'|format((m.quantity|float / (m.times_per_day|float)) if (m.times_per_day|float)>0 else 0)) }} วัน</td>
+        <td class="{{ 'bad' if (m.quantity|float) < (m.expected_quantity|float) else 'ok' }}">{{ m.expected_quantity }}</td>
         <td><b>{{ m.stock_quantity|default(0) }}</b> {{ m.stock_unit or '' }}</td>
         <td class="{{ 'ok' if m.stock_found and m.stock_status == 'มีเพียงพอ' else 'bad' }}">
           {% if m.stock_found and m.stock_status == 'มีเพียงพอ' %}✓ มีเพียงพอ{% else %}✗ ไม่เพียงพอ{% endif %}
@@ -3563,17 +6696,6 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
   </div>
 
   <div class="section">
-    <h3>🚫 Drug Allergy</h3>
-    {% if patient.allergy_results %}
-      {% for x in patient.allergy_results %}
-      <div class="interaction bad">🚫 <b>{{ x.Drug }}</b> — {{ x.Note }}</div>
-      {% endfor %}
-    {% else %}
-      <div class="summary ok">✅ ไม่พบยาที่ตรงกับประวัติแพ้ยา</div>
-    {% endif %}
-  </div>
-
-  <div class="section">
     <h3>⚕️ Drug Interaction</h3>
     {% if patient.interaction_results %}
       {% for x in patient.interaction_results %}
@@ -3582,71 +6704,6 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
     {% else %}
       <div class="summary ok">✅ ไม่พบ Drug Interaction</div>
       <div class="note">ไม่พบข้อมูล Interaction ในฐานความรู้ของระบบ<br><br>ℹ️ ข้อความนี้หมายถึง <b>ไม่พบข้อมูล Interaction ในฐานความรู้ของระบบ</b> ไม่ได้หมายความว่ายาทั้งหมดปลอดภัยหรือไม่มี Interaction เนื่องจากฐานข้อมูลนี้ใช้สำหรับการทดสอบระบบ</div>
-    {% endif %}
-  </div>
-
-  <div class="section">
-    <h3>🩺 Indication Checking (ยา ↔ การวินิจฉัย)</h3>
-    {% if patient.indication_results %}
-      {% for x in patient.indication_results %}
-      <div class="interaction {{ 'bad' if x.Matched == False else 'summary' }}">
-        {% if x.Matched == False %}❌{% else %}ℹ️{% endif %}
-        <b>{{ x.Drug }}</b> — {{ x.Note }}
-        {% if x.Expected_Indications %}<br>ข้อบ่งใช้ปกติ: {{ x.Expected_Indications|join(', ') }}{% endif %}
-      </div>
-      {% endfor %}
-    {% else %}
-      <div class="summary ok">✅ ไม่พบยาที่ใช้ผิดข้อบ่งใช้ (หรือยังไม่มีข้อมูล Diagnosis ในไฟล์ใบสั่งยา)</div>
-    {% endif %}
-  </div>
-
-  <div class="section">
-    <h3>🧪 ผลแลป — สูง / ต่ำ / ปกติ</h3>
-    {% if patient.lab_status_results %}
-      {% for x in patient.lab_status_results %}
-      <div class="summary {{ 'bad' if x.Status != 'normal' else 'ok' }}">
-        {% if x.Status == 'high' %}🔺{% elif x.Status == 'low' %}🔻{% else %}✅{% endif %}
-        <b>{{ x.Lab }}</b> = {{ x.Value }} {{ x.Unit }} —
-        <span class="{{ 'bad' if x.Status != 'normal' else 'ok' }}">{{ x.Status_TH }}</span>
-        ({{ x.Description }})
-      </div>
-      {% endfor %}
-    {% else %}
-      <div class="summary">ไม่มีข้อมูลผลแลป (eGFR / K+ / ALT) ในไฟล์ใบสั่งยา</div>
-    {% endif %}
-  </div>
-
-  <div class="section">
-    <h3>🧪 Lab-based Dose Adjustment (eGFR / K+ / ALT)</h3>
-    {% if patient.lab_adjustment_results %}
-      {% for x in patient.lab_adjustment_results %}
-      <div class="interaction bad">
-        ❌ <b>{{ x.Drug }}</b> ({{ x.Lab }} = {{ x.Value }} {{ x.Unit }}) [{{ x.Severity }}] — {{ x.Recommendation }}
-        {% if x.Alternatives %}<br>ยาทางเลือก: {{ x.Alternatives|join(', ') }}
-        {% elif x.Alternatives_Note %}<br><i>{{ x.Alternatives_Note }}</i>{% endif %}
-      </div>
-      {% endfor %}
-    {% else %}
-      <div class="summary ok">✅ ไม่พบคำแนะนำปรับขนาดยาจากผล Lab (หรือยังไม่มีข้อมูล eGFR/K+/ALT ในไฟล์ใบสั่งยา)</div>
-    {% endif %}
-  </div>
-
-  <div class="section">
-    <h3>🩸 ความดันโลหิต (BP)</h3>
-    {% if patient.bp_flag_results %}
-      {% for x in patient.bp_flag_results %}
-        {% if x.Type == 'hypotension' %}
-        <div class="interaction bad">
-          ⚠️ <b>{{ x.Drug }}</b> — {{ x.Recommendation }}
-        </div>
-        {% else %}
-        <div class="interaction" style="background:#fff7ed;border-color:#fed7aa">
-          ℹ️ {{ x.Recommendation }}
-        </div>
-        {% endif %}
-      {% endfor %}
-    {% else %}
-      <div class="summary ok">✅ ไม่พบความผิดปกติของความดัน (หรือยังไม่มีข้อมูล BP ในไฟล์ใบสั่งยา)</div>
     {% endif %}
   </div>
 
@@ -3679,6 +6736,8 @@ def _prepare_unified_result_patient(patient):
     patient = calculate_days_check(patient)
     patient["interaction_results"] = check_patient_drug_interactions(patient)
 
+    # FINAL INTERACTION FALLBACK: ตรวจจากชื่อยาของ HN โดยตรง
+    # ไม่ผูกกับวันที่ เพื่อให้คู่ยาที่อยู่ในฐานข้อมูลแสดงใน Consult PDF แน่นอน
     if not patient.get("interaction_results"):
         direct_drug_names = [
             str(m.get("name", "") or "").strip()
@@ -3691,26 +6750,20 @@ def _prepare_unified_result_patient(patient):
     patient = apply_stock_to_patient(patient)
     patient["stock_sufficient"] = patient_stock_is_sufficient(patient)
 
-    patient["indication_results"] = check_drug_indications(patient)
-    patient["lab_status_results"] = check_lab_status(patient)
-    patient["lab_adjustment_results"] = check_lab_based_adjustments(patient)
-    patient["bp_flag_results"] = check_bp_flags(patient)
-    patient["allergy_results"] = check_drug_allergy(patient)
-
+    # สร้าง Consult PDF ใบเดียวเมื่อมี Days Supply หรือ Drug Interaction
+    # (ไม่รวม Stock ใน Consult)
     has_days_problem = bool(
-        patient.get("days_supply_has_problem", False) or patient.get("days_check_required", False)
+        patient.get("days_supply_has_problem", False)
+        or patient.get("days_check_required", False)
     )
-    has_interaction = bool(patient.get("interaction_results", []) or [])
-    has_indication_issue = bool(patient.get("indication_results", []) or [])
-    has_lab_issue = bool(patient.get("lab_adjustment_results", []) or [])
-    has_allergy_issue = bool(patient.get("allergy_results", []) or [])
-    has_bp_hypotension = any(
-        x.get("Type") == "hypotension"
-        for x in (patient.get("bp_flag_results", []) or [])
+    has_interaction = bool(
+        patient.get("interaction_results", []) or []
     )
 
-    if has_days_problem or has_interaction or has_indication_issue or has_lab_issue or has_allergy_issue or has_bp_hypotension:
+    if has_days_problem or has_interaction:
         try:
+            # ลืม/ไม่ใช้ PDF Consult เก่าทันทีที่เตรียมผลใหม่
+            # เพื่อบังคับให้สร้าง PDF จาก interaction_results ชุดล่าสุด
             old_pdf = str(patient.get("days_consult_pdf", "") or "").strip()
             if old_pdf:
                 old_path = os.path.join(CONSULT_FOLDER, old_pdf)
@@ -3721,47 +6774,60 @@ def _prepare_unified_result_patient(patient):
                 except Exception as remove_error:
                     print("WARNING REMOVE OLD CONSULT PDF:", repr(remove_error))
 
+            # เคลียร์ชื่อ PDF เดิมก่อนสร้างใบใหม่
             patient["days_consult_pdf"] = ""
             patient["days_consult_created_at"] = ""
 
+            # สร้าง PDF ใหม่ทุกครั้ง ไม่ใช้ไฟล์เก่าที่ค้างอยู่
             pdf_filename = create_days_supply_consult_pdf(patient)
             if pdf_filename:
                 patient["days_consult_pdf"] = pdf_filename
-                patient["days_consult_created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                patient["days_consult_created_at"] = datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
                 if patient.get("queue_id") is not None:
                     update_queue_patient(patient.get("queue_id"), patient)
         except Exception as e:
             print("ERROR PREPARE CONSULT PDF:", repr(e))
 
-    # หมายเหตุ: เฉพาะ BP "hypotension" (safety) เท่านั้นที่บังคับให้ต้อง Consult
-    # ส่วน "uncontrolled" (efficacy) เป็นแค่ข้อมูลแจ้ง ไม่บล็อกการจ่ายยา
     patient["non_stock_problem"] = bool(
         patient.get("days_supply_has_problem", False)
         or patient.get("interaction_results", [])
-        or patient.get("indication_results", [])
-        or patient.get("lab_adjustment_results", [])
-        or patient.get("allergy_results", [])
-        or has_bp_hypotension
     )
     patient["consult_approved"] = bool(patient.get("_consult_approved", False))
     return patient
 
-
-@app.route("/prescription-result")
+@app.route(
+    "/prescription-result"
+)
 def prescription_result():
     patients = get_pending_patients()
     patients = [_prepare_unified_result_patient(p) for p in patients]
-    return render_template_string(UNIFIED_RESULT_TEMPLATE, patients=patients, error=request.args.get("error", ""))
+    return render_template_string(
+        UNIFIED_RESULT_TEMPLATE,
+        patients=patients,
+        error=request.args.get("error", "")
+    )
 
+
+# ============================================================
+# REAL-TIME PRESCRIPTION REFRESH
+# ============================================================
 
 @app.route("/prescription-live")
 def prescription_live():
+    """
+    Endpoint สำหรับหน้าเว็บตรวจว่า Excel เปลี่ยนหรือไม่
+    """
     sync_prescription_queue_from_excel()
 
     if os.path.exists(PRESCRIPTION_SOURCE_FILE):
         try:
             stat = os.stat(PRESCRIPTION_SOURCE_FILE)
-            signature = "{}-{}".format(stat.st_mtime_ns, stat.st_size)
+            signature = "{}-{}".format(
+                stat.st_mtime_ns,
+                stat.st_size
+            )
         except Exception:
             signature = "unknown"
     else:
@@ -3769,55 +6835,117 @@ def prescription_live():
 
     conn = get_db()
     try:
-        pending_count = conn.execute("""
-            SELECT COUNT(*) FROM prescription_queue WHERE status = 'pending'
-        """).fetchone()[0]
+        pending_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM prescription_queue
+            WHERE status = 'pending'
+            """
+        ).fetchone()[0]
     finally:
         conn.close()
 
-    return jsonify({"signature": signature, "pending_count": pending_count})
+    return jsonify({
+        "signature": signature,
+        "pending_count": pending_count
+    })
 
 
-@app.route("/dispense/<int:queue_id>", methods=["POST"])
+# ============================================================
+# DISPENSE
+# ============================================================
+
+@app.route(
+    "/dispense/<int:queue_id>",
+    methods=["POST"]
+)
 def dispense(queue_id):
     patient = get_queue_patient(queue_id)
     if patient is None:
         return redirect(url_for("prescription_result"))
 
+    # ตรวจใหม่ทุกครั้งก่อนจ่าย เพื่อกัน Stock เปลี่ยนระหว่างเปิดหน้า
     patient = _prepare_unified_result_patient(patient)
 
+    # DS / Interaction ต้องผ่าน Consult ก่อน แต่ Consult ไม่รวม Stock
     if patient.get("non_stock_problem") and not patient.get("consult_approved"):
         return redirect(url_for("doctor_confirm", queue_id=queue_id))
 
+    # Stock เป็นด่านสุดท้าย และห้ามสร้าง Consult จากปัญหา Stock
     if not patient_stock_is_sufficient(patient):
         return redirect(url_for("prescription_result", error="❌ ไม่สามารถจ่ายยาได้ เนื่องจาก Stock ไม่เพียงพอ หรือไม่พบข้อมูลยาใน stock.xlsx"))
 
-    success = complete_queue_action(patient, "dispense", "จ่ายยา", queue_id=queue_id)
+    success = complete_queue_action(
+        patient,
+        "dispense",
+        "จ่ายยา",
+        queue_id=queue_id
+    )
     if not success:
         return redirect(url_for("prescription_result", error="❌ ไม่สามารถบันทึกการจ่ายยา หรือหัก Stock ได้ กรุณาตรวจสอบ stock.xlsx แล้วลองใหม่"))
 
     return redirect(url_for("prescription_result"))
 
 
-@app.route("/doctor-confirm/<int:queue_id>", methods=["GET"])
+# ============================================================
+# DOCTOR CONFIRM
+# ============================================================
+
+@app.route(
+    "/doctor-confirm/<int:queue_id>",
+    methods=["GET"]
+)
 def doctor_confirm(queue_id):
-    patient = get_queue_patient(queue_id)
+
+    patient = get_queue_patient(
+        queue_id
+    )
+
 
     if patient is None:
-        return redirect(url_for("prescription_result"))
 
-    has_interaction = len(patient.get("interaction_results", [])) > 0
-    has_days_problem = bool(patient.get("days_check_required", False))
+        return redirect(
+            url_for(
+                "prescription_result"
+            )
+        )
+
+
+    has_interaction = len(
+        patient.get(
+            "interaction_results",
+            []
+        )
+    ) > 0
+
+    has_days_problem = bool(
+        patient.get(
+            "days_check_required",
+            False
+        )
+    )
 
     if not has_interaction and not has_days_problem:
-        return redirect(url_for("prescription_result"))
+
+        return redirect(
+            url_for(
+                "prescription_result"
+            )
+        )
+
 
     if has_days_problem and not has_interaction:
         return render_template(
             "doctor_days_confirm.html",
             patient=patient,
-            days_check=patient.get("days_check_results", []),
-            days_consult_pdf=patient.get("days_consult_pdf", ""),
+            days_check=patient.get(
+                "days_check_results",
+                []
+            ),
+            days_consult_pdf=patient.get(
+                "days_consult_pdf",
+                ""
+            ),
             has_days_problem=has_days_problem
         )
 
@@ -3832,19 +6960,57 @@ def doctor_confirm(queue_id):
     )
 
 
-@app.route("/doctor-decision/<int:queue_id>", methods=["POST"])
+# ============================================================
+# DOCTOR DECISION
+# ============================================================
+
+@app.route(
+    "/doctor-decision/<int:queue_id>",
+    methods=["POST"]
+)
 def doctor_decision(queue_id):
-    patient = get_queue_patient(queue_id)
+
+    patient = get_queue_patient(
+        queue_id
+    )
+
 
     if patient is None:
-        return redirect(url_for("prescription_result"))
 
-    has_interaction = len(patient.get("interaction_results", [])) > 0
-    has_days_problem = bool(patient.get("days_check_required", False))
+        return redirect(
+            url_for(
+                "prescription_result"
+            )
+        )
+
+
+    has_interaction = len(
+        patient.get(
+            "interaction_results",
+            []
+        )
+    ) > 0
+
+    has_days_problem = bool(
+        patient.get(
+            "days_check_required",
+            False
+        )
+    )
 
     if not has_interaction and not has_days_problem:
-        return redirect(url_for("prescription_result"))
 
+        return redirect(
+            url_for(
+                "prescription_result"
+            )
+        )
+
+
+    # ========================================================
+    # GET DECISION
+    # ========================================================
+    # รองรับค่าจากปุ่มยืนยัน/ยกเลิกหลายรูปแบบ
     decision = (
         request.form.get("decision")
         or request.form.get("action")
@@ -3861,37 +7027,77 @@ def doctor_decision(queue_id):
         "confirm_dispense", "dispense_confirm", "confirm_original_drug"
     }:
         decision = "original"
-    elif decision in {"override_doctor", "confirm_override", "ยืนยันแทนแพทย์", "override"}:
+    elif decision in {
+        "override_doctor", "confirm_override",
+        "ยืนยันแทนแพทย์", "override"
+    }:
         decision = "override_doctor"
-    elif decision in {"increase", "add", "เพิ่ม", "increase_quantity", "add_quantity"}:
+    elif decision in {
+        "increase", "add", "เพิ่ม",
+        "increase_quantity", "add_quantity"
+    }:
         decision = "increase"
-    elif decision in {"decrease", "reduce", "ลด", "decrease_quantity", "reduce_quantity"}:
+    elif decision in {
+        "decrease", "reduce", "ลด",
+        "decrease_quantity", "reduce_quantity"
+    }:
         decision = "decrease"
-    elif decision in {"correct", "corrected", "ถูกแล้ว", "right", "keep", "keep_original"}:
+    elif decision in {
+        "correct", "corrected", "ถูกแล้ว",
+        "right", "keep", "keep_original"
+    }:
         decision = "correct"
-    elif decision in {"cancel", "cancelled", "canceled", "no", "reject", "rejected", "cancel_dispense", "cancel_confirm"}:
+    elif decision in {
+        "cancel", "cancelled", "canceled", "no",
+        "reject", "rejected", "cancel_dispense", "cancel_confirm"
+    }:
         decision = "cancel"
 
+    # ถ้าเป็น Consult เรื่องจำนวนยา/จำนวนวันเพียงอย่างเดียว
+    # รองรับปุ่ม "ยืนยันแทนแพทย์" โดยใช้จำนวนยาตามใบสั่งเดิม
+    # และหัก Stock เฉพาะเมื่อกดยืนยันสำเร็จ
     if (
-        has_days_problem and not has_interaction
-        and decision in {"override_doctor", "confirm_override", "ยืนยันแทนแพทย์"}
+        has_days_problem
+        and not has_interaction
+        and decision in {
+            "override_doctor",
+            "confirm_override",
+            "ยืนยันแทนแพทย์"
+        }
     ):
         decision = "override_doctor"
 
-    if has_days_problem and not has_interaction and decision == "override_doctor":
+    # ========================================================
+    # CONFIRM INSTEAD OF DOCTOR
+    # ========================================================
+    # ใช้จำนวนที่ระบุในใบสั่งแพทย์เดิมเท่านั้น
+    # ไม่เปลี่ยน quantity เป็นค่าที่ระบบคำนวณ
+    if (
+        has_days_problem
+        and not has_interaction
+        and decision == "override_doctor"
+    ):
         if not patient_stock_is_sufficient(patient):
             return render_template(
                 "doctor_days_confirm.html",
                 patient=patient,
                 days_check=patient.get("days_check_results", []),
                 days_consult_pdf=patient.get("days_consult_pdf", ""),
-                error=("ไม่สามารถยืนยันแทนแพทย์ได้ เนื่องจาก Stock ไม่เพียงพอ หรือไม่พบข้อมูลยาใน stock.xlsx")
+                error=(
+                    "ไม่สามารถยืนยันแทนแพทย์ได้ เนื่องจาก Stock ไม่เพียงพอ "
+                    "หรือไม่พบข้อมูลยาใน stock.xlsx"
+                )
             )
 
         patient["_manual_days_decision"] = "override_doctor"
         patient["days_check_required"] = False
 
-        success = complete_queue_action(patient, "override_doctor", "ยืนยันแทนแพทย์ตามใบสั่งยาเดิม", queue_id=queue_id)
+        success = complete_queue_action(
+            patient,
+            "override_doctor",
+            "ยืนยันแทนแพทย์ตามใบสั่งยาเดิม",
+            queue_id=queue_id
+        )
 
         if not success:
             return render_template(
@@ -3899,26 +7105,52 @@ def doctor_decision(queue_id):
                 patient=patient,
                 days_check=patient.get("days_check_results", []),
                 days_consult_pdf=patient.get("days_consult_pdf", ""),
-                error=("ไม่สามารถบันทึกการยืนยันแทนแพทย์ได้ หรือไม่สามารถหัก Stock ได้")
+                error=(
+                    "ไม่สามารถบันทึกการยืนยันแทนแพทย์ได้ "
+                    "หรือไม่สามารถหัก Stock ได้"
+                )
             )
 
         return redirect(url_for("prescription_result"))
 
-    if has_days_problem and decision in {"increase", "decrease", "correct", "override_doctor"}:
+
+    # ========================================================
+    # DAYS SUPPLY DECISION
+    # ========================================================
+
+    if has_days_problem and decision in {
+        "increase",
+        "decrease",
+        "correct",
+        "override_doctor"
+    }:
+
+        # ----------------------------------------------------
+        # ยืนยันแทนแพทย์ = ใช้จำนวนตามใบสั่งเดิม
+        # ----------------------------------------------------
         if decision == "override_doctor":
+
             if not patient_stock_is_sufficient(patient):
                 return render_template(
                     "doctor_days_confirm.html",
                     patient=patient,
                     days_check=patient.get("days_check_results", []),
                     days_consult_pdf=patient.get("days_consult_pdf", ""),
-                    error=("ไม่สามารถยืนยันแทนแพทย์ได้ เนื่องจาก Stock ไม่เพียงพอ หรือไม่พบข้อมูลยาใน stock.xlsx")
+                    error=(
+                        "ไม่สามารถยืนยันแทนแพทย์ได้ เนื่องจาก Stock ไม่เพียงพอ "
+                        "หรือไม่พบข้อมูลยาใน stock.xlsx"
+                    )
                 )
 
             patient["_manual_days_decision"] = "override_doctor"
             patient["days_check_required"] = False
 
-            success = complete_queue_action(patient, "override_doctor", "ยืนยันแทนแพทย์ตามใบสั่งยาเดิม", queue_id=queue_id)
+            success = complete_queue_action(
+                patient,
+                "override_doctor",
+                "ยืนยันแทนแพทย์ตามใบสั่งยาเดิม",
+                queue_id=queue_id
+            )
 
             if not success:
                 return render_template(
@@ -3926,13 +7158,22 @@ def doctor_decision(queue_id):
                     patient=patient,
                     days_check=patient.get("days_check_results", []),
                     days_consult_pdf=patient.get("days_consult_pdf", ""),
-                    error=("ไม่สามารถบันทึกการยืนยันแทนแพทย์ได้ หรือไม่สามารถหัก Stock ได้")
+                    error=(
+                        "ไม่สามารถบันทึกการยืนยันแทนแพทย์ได้ "
+                        "หรือไม่สามารถหัก Stock ได้"
+                    )
                 )
 
             return redirect(url_for("prescription_result"))
 
+        # ----------------------------------------------------
+        # เพิ่ม / ลด = ปรับจำนวนยาตามจำนวนที่ควรเป็น
+        # ----------------------------------------------------
         if decision in {"increase", "decrease"}:
+
             for medicine in patient.get("medicines", []):
+
+                # ปรับเฉพาะรายการที่ไม่สัมพันธ์กับวันนัด
                 if medicine.get("days_match", False):
                     continue
 
@@ -3949,8 +7190,13 @@ def doctor_decision(queue_id):
                 medicine["quantity"] = expected
 
                 try:
-                    times = float(medicine.get("times_per_day", 1) or 1)
-                    medicine["days_supply"] = float(expected) / times if times > 0 else 0
+                    times = float(
+                        medicine.get("times_per_day", 1) or 1
+                    )
+                    medicine["days_supply"] = (
+                        float(expected) / times
+                        if times > 0 else 0
+                    )
                 except Exception:
                     medicine["days_supply"] = 0
 
@@ -3962,8 +7208,10 @@ def doctor_decision(queue_id):
             patient["_manual_days_decision"] = decision
 
         else:
+            # ถูกแล้ว = แพทย์ยืนยันใช้จำนวนเดิม
             patient["_manual_days_decision"] = "correct"
 
+        # ผ่าน Consult แล้ว แต่ยังไม่หัก Stock
         patient["days_check_required"] = False
         patient["_consult_approved"] = True
 
@@ -3978,7 +7226,13 @@ def doctor_decision(queue_id):
 
         return redirect(url_for("prescription_result"))
 
+
+    # ========================================================
+    # ORIGINAL / INTERACTION DECISION
+    # ========================================================
+
     if decision == "original":
+        # ยืนยันผล Consult เท่านั้น ยังไม่หัก Stock
         patient["_consult_approved"] = True
         patient["days_check_required"] = False
         if not update_queue_patient(queue_id, patient):
@@ -3994,75 +7248,226 @@ def doctor_decision(queue_id):
             )
         return redirect(url_for("prescription_result"))
 
+    # ========================================================
+    # SUBSTITUTE
+    # ========================================================
+
     if decision == "substitute":
+
         return render_template(
-            "doctor_confirm.html", patient=patient,
-            substitute_drugs=TEST_SUBSTITUTE_DRUGS, show_substitute=True
+
+            "doctor_confirm.html",
+
+            patient=patient,
+
+            substitute_drugs=
+                TEST_SUBSTITUTE_DRUGS,
+
+            show_substitute=True
+
         )
 
+
+    # ========================================================
+    # CANCEL
+    # ========================================================
+
     if decision == "cancel":
-        success = complete_queue_action(patient, "cancel", "ยกเลิกการจ่ายยา", queue_id=queue_id)
+
+        success = complete_queue_action(
+
+            patient,
+
+            "cancel",
+
+            "ยกเลิกการจ่ายยา",
+
+            queue_id=queue_id
+
+        )
+
 
         if not success:
+
             return render_template(
-                "doctor_confirm.html", patient=patient,
-                substitute_drugs=TEST_SUBSTITUTE_DRUGS, show_substitute=False,
-                error=("ไม่สามารถบันทึกการยกเลิกได้ กรุณาลองใหม่อีกครั้ง")
+                "doctor_confirm.html",
+
+                patient=patient,
+
+                substitute_drugs=
+                    TEST_SUBSTITUTE_DRUGS,
+
+                show_substitute=False,
+
+                error=(
+                    "ไม่สามารถบันทึกการยกเลิกได้ "
+                    "กรุณาลองใหม่อีกครั้ง"
+                )
             )
 
-        return redirect(url_for("prescription_result"))
+
+        return redirect(
+            url_for(
+                "prescription_result"
+            )
+        )
+
 
     return render_template(
-        "doctor_confirm.html", patient=patient,
-        substitute_drugs=TEST_SUBSTITUTE_DRUGS, show_substitute=False,
+
+        "doctor_confirm.html",
+
+        patient=patient,
+
+        substitute_drugs=
+            TEST_SUBSTITUTE_DRUGS,
+
+        show_substitute=False,
+
         error="กรุณาเลือกการดำเนินการ"
+
     )
 
 
-@app.route("/confirm-substitute/<int:queue_id>", methods=["POST"])
+# ============================================================
+# CONFIRM SUBSTITUTE
+# ============================================================
+
+@app.route(
+    "/confirm-substitute/<int:queue_id>",
+    methods=["POST"]
+)
 def confirm_substitute(queue_id):
-    patient = get_queue_patient(queue_id)
+
+    patient = get_queue_patient(
+        queue_id
+    )
+
 
     if patient is None:
-        return redirect(url_for("prescription_result"))
 
-    substitute_drug = request.form.get("substitute_drug", "").strip()
+        return redirect(
+            url_for(
+                "prescription_result"
+            )
+        )
+
+
+    substitute_drug = request.form.get(
+        "substitute_drug",
+        ""
+    ).strip()
+
 
     if not substitute_drug:
+
         return render_template(
-            "doctor_confirm.html", patient=patient,
-            substitute_drugs=TEST_SUBSTITUTE_DRUGS, show_substitute=True,
+
+            "doctor_confirm.html",
+
+            patient=patient,
+
+            substitute_drugs=
+                TEST_SUBSTITUTE_DRUGS,
+
+            show_substitute=True,
+
             error="กรุณาเลือกยาทดแทน"
+
         )
+
 
     valid_substitute = None
 
+
     for drug in TEST_SUBSTITUTE_DRUGS:
+
         if drug["name"] == substitute_drug:
+
             valid_substitute = drug
+
             break
 
+
     if valid_substitute is None:
+
         return render_template(
-            "doctor_confirm.html", patient=patient,
-            substitute_drugs=TEST_SUBSTITUTE_DRUGS, show_substitute=True,
+
+            "doctor_confirm.html",
+
+            patient=patient,
+
+            substitute_drugs=
+                TEST_SUBSTITUTE_DRUGS,
+
+            show_substitute=True,
+
             error="ไม่พบยาทดแทนในรายการทดสอบ"
+
         )
 
-    success = complete_queue_action(patient, "substitute", "เลือกยาทดแทน", substitute_drug, queue_id=queue_id)
+
+    # ========================================================
+    # SUBSTITUTE
+    #
+    # ปัจจุบันยังไม่หัก Stock
+    # เพราะ TEST_SUBSTITUTE_DRUGS
+    # ไม่มีจำนวนที่ต้องจ่าย
+    # ========================================================
+
+    success = complete_queue_action(
+
+        patient,
+
+        "substitute",
+
+        "เลือกยาทดแทน",
+
+        substitute_drug,
+
+        queue_id=queue_id
+
+    )
+
 
     if not success:
+
         return render_template(
-            "doctor_confirm.html", patient=patient,
-            substitute_drugs=TEST_SUBSTITUTE_DRUGS, show_substitute=True,
-            error=("ไม่สามารถบันทึกยาทดแทนได้ กรุณาลองใหม่อีกครั้ง")
+
+            "doctor_confirm.html",
+
+            patient=patient,
+
+            substitute_drugs=
+                TEST_SUBSTITUTE_DRUGS,
+
+            show_substitute=True,
+
+            error=(
+                "ไม่สามารถบันทึกยาทดแทนได้ "
+                "กรุณาลองใหม่อีกครั้ง"
+            )
+
         )
 
-    return redirect(url_for("prescription_result"))
 
+    return redirect(
+        url_for(
+            "prescription_result"
+        )
+    )
+
+
+# ============================================================
+# AUTO REFRESH PRESCRIPTION QUEUE
+# ============================================================
 
 @app.after_request
 def inject_prescription_live_refresh(response):
+    """
+    หน้าใบสั่งยาจะตรวจ Excel อัตโนมัติทุก 3 วินาที
+    และแสดง Days Supply Alert บนหน้าเว็บโดยไม่ต้องแก้ template
+    """
     try:
         if (
             request.path == "/prescription-result"
@@ -4071,6 +7476,9 @@ def inject_prescription_live_refresh(response):
         ):
             html = response.get_data(as_text=True)
 
+            # ------------------------------------------------
+            # REAL-TIME REFRESH
+            # ------------------------------------------------
             script = """
 <script>
 (function () {
@@ -4121,226 +7529,645 @@ def inject_prescription_live_refresh(response):
             response.set_data(html)
 
     except Exception as e:
-        print("ERROR INJECT PRESCRIPTION LIVE REFRESH:", repr(e))
+        print(
+            "ERROR INJECT PRESCRIPTION LIVE REFRESH:",
+            repr(e)
+        )
 
     return response
 
 
+# ============================================================
+# HTML ESCAPE
+# ============================================================
+
 def html_escape(value):
+    """Escape text before injecting dynamic values into HTML."""
     import html
     return html.escape(str(value if value is not None else ""), quote=True)
 
 
+# ============================================================
+# HOME
+# ============================================================
+
 @app.route("/")
 def index():
-    return render_template("index.html")
+
+    return render_template(
+        "index.html"
+    )
 
 
-@app.route("/stock", methods=["GET", "POST"])
+# ============================================================
+# STOCK
+# ============================================================
+
+@app.route(
+    "/stock",
+    methods=["GET", "POST"]
+)
 def stock():
+
+    # ========================================================
+    # GET
+    # ========================================================
+
     if request.method == "GET":
+
         stock_data = load_stock()
-        stock_exists = os.path.exists(STOCK_FILE)
-        stock_filename = os.path.basename(STOCK_FILE) if stock_exists else None
+
+
+        stock_exists = os.path.exists(
+            STOCK_FILE
+        )
+
+
+        stock_filename = (
+
+            os.path.basename(
+                STOCK_FILE
+            )
+
+            if stock_exists
+
+            else None
+
+        )
+
 
         stock_updated_at = None
+
+
         if stock_exists:
+
             try:
-                modified_time = os.path.getmtime(STOCK_FILE)
-                stock_updated_at = datetime.fromtimestamp(modified_time).strftime("%d/%m/%Y %H:%M:%S")
+
+                modified_time = os.path.getmtime(
+                    STOCK_FILE
+                )
+
+
+                stock_updated_at = datetime.fromtimestamp(
+                    modified_time
+                ).strftime(
+                    "%d/%m/%Y %H:%M:%S"
+                )
+
             except Exception:
+
                 stock_updated_at = None
 
+
         return render_template(
-            "stock.html", stock_data=stock_data, stock_exists=stock_exists,
-            stock_filename=stock_filename, stock_updated_at=stock_updated_at
+
+            "stock.html",
+
+            stock_data=stock_data,
+
+            stock_exists=stock_exists,
+
+            stock_filename=stock_filename,
+
+            stock_updated_at=stock_updated_at
+
         )
 
-    uploaded_file = request.files.get("stock_file")
 
-    if uploaded_file is None or uploaded_file.filename == "":
+    # ========================================================
+    # POST
+    # ========================================================
+
+    uploaded_file = request.files.get(
+        "stock_file"
+    )
+
+
+    if uploaded_file is None:
+
         return render_template(
-            "stock.html", stock_data=load_stock(),
-            stock_exists=os.path.exists(STOCK_FILE),
-            stock_filename=(os.path.basename(STOCK_FILE) if os.path.exists(STOCK_FILE) else None),
+
+            "stock.html",
+
+            stock_data=load_stock(),
+
+            stock_exists=os.path.exists(
+                STOCK_FILE
+            ),
+
+            stock_filename=(
+
+                os.path.basename(
+                    STOCK_FILE
+                )
+
+                if os.path.exists(
+                    STOCK_FILE
+                )
+
+                else None
+
+            ),
+
             error="กรุณาเลือกไฟล์ Excel Stock"
+
         )
 
-    extension = os.path.splitext(uploaded_file.filename)[1].lower()
 
-    if extension not in [".xlsx", ".xlsm"]:
+    if uploaded_file.filename == "":
+
         return render_template(
-            "stock.html", stock_data=load_stock(),
-            stock_exists=os.path.exists(STOCK_FILE),
-            stock_filename=(os.path.basename(STOCK_FILE) if os.path.exists(STOCK_FILE) else None),
-            error=("กรุณาเลือกไฟล์ Excel (.xlsx หรือ .xlsm)")
+
+            "stock.html",
+
+            stock_data=load_stock(),
+
+            stock_exists=os.path.exists(
+                STOCK_FILE
+            ),
+
+            stock_filename=(
+
+                os.path.basename(
+                    STOCK_FILE
+                )
+
+                if os.path.exists(
+                    STOCK_FILE
+                )
+
+                else None
+
+            ),
+
+            error="กรุณาเลือกไฟล์ Excel Stock"
+
         )
+
+
+    extension = os.path.splitext(
+        uploaded_file.filename
+    )[1].lower()
+
+
+    # ========================================================
+    # CHECK EXTENSION
+    # ========================================================
+
+    if extension not in [
+        ".xlsx",
+        ".xlsm"
+    ]:
+
+        return render_template(
+
+            "stock.html",
+
+            stock_data=load_stock(),
+
+            stock_exists=os.path.exists(
+                STOCK_FILE
+            ),
+
+            stock_filename=(
+
+                os.path.basename(
+                    STOCK_FILE
+                )
+
+                if os.path.exists(
+                    STOCK_FILE
+                )
+
+                else None
+
+            ),
+
+            error=(
+                "กรุณาเลือกไฟล์ Excel "
+                "(.xlsx หรือ .xlsm)"
+            )
+
+        )
+
 
     temp_stock_path = None
 
+
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
-            uploaded_file.save(temp_file.name)
+
+        # ====================================================
+        # SAVE UPLOAD TO TEMP
+        # ====================================================
+
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=extension
+        ) as temp_file:
+
+            uploaded_file.save(
+                temp_file.name
+            )
+
             temp_stock_path = temp_file.name
 
-        wb = load_workbook(temp_stock_path, data_only=True, read_only=True)
+
+        # ====================================================
+        # TEST OPEN EXCEL
+        # ====================================================
+
+        wb = load_workbook(
+            temp_stock_path,
+            data_only=True,
+            read_only=True
+        )
+
+
         ws = wb.active
 
+
+        # ====================================================
+        # CHECK SHEET
+        # ====================================================
+
         if ws.max_row < 1:
-            wb.close()
-            raise ValueError("ไฟล์ Excel ไม่มีข้อมูล")
 
-        headers = [cell.value for cell in ws[1]]
-
-        if not any(header is not None for header in headers):
             wb.close()
-            raise ValueError("ไม่พบหัวตารางในไฟล์ Stock")
+
+            raise ValueError(
+                "ไฟล์ Excel ไม่มีข้อมูล"
+            )
+
+
+        headers = [
+
+            cell.value
+
+            for cell in ws[1]
+
+        ]
+
+
+        # ====================================================
+        # CHECK HEADER
+        # ====================================================
+
+        if not any(
+            header is not None
+            for header in headers
+        ):
+
+            wb.close()
+
+            raise ValueError(
+                "ไม่พบหัวตารางในไฟล์ Stock"
+            )
+
+
+        # ====================================================
+        # CHECK DATA
+        # ====================================================
 
         has_data = False
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            if any(value is not None for value in row):
+
+
+        for row in ws.iter_rows(
+            min_row=2,
+            values_only=True
+        ):
+
+            if any(
+                value is not None
+                for value in row
+            ):
+
                 has_data = True
+
                 break
+
 
         wb.close()
 
-        if not has_data:
-            raise ValueError("ไม่พบข้อมูล Stock ใต้หัวตาราง")
 
-        shutil.copyfile(temp_stock_path, STOCK_FILE)
+        if not has_data:
+
+            raise ValueError(
+                "ไม่พบข้อมูล Stock ใต้หัวตาราง"
+            )
+
+
+        # ====================================================
+        # REPLACE OLD STOCK
+        # ====================================================
+
+        shutil.copyfile(
+            temp_stock_path,
+            STOCK_FILE
+        )
+
 
         print("")
         print("=" * 70)
         print("STOCK FILE UPDATED")
-        print("Original uploaded filename:", uploaded_file.filename)
-        print("Stored as:", STOCK_FILE)
+        print(
+            "Original uploaded filename:",
+            uploaded_file.filename
+        )
+        print(
+            "Stored as:",
+            STOCK_FILE
+        )
         print("=" * 70)
+
+
+        # ====================================================
+        # LOAD NEW STOCK
+        # ====================================================
 
         new_stock_data = load_stock()
 
+
+        # ====================================================
+        # CHECK AGAIN
+        # ====================================================
+
         if not new_stock_data:
-            raise ValueError("อัปโหลดสำเร็จแต่ไม่สามารถอ่านข้อมูล Stock ได้")
+
+            raise ValueError(
+                "อัปโหลดสำเร็จแต่ไม่สามารถอ่านข้อมูล Stock ได้"
+            )
+
 
         return render_template(
-            "stock.html", stock_data=new_stock_data, stock_exists=True,
-            stock_filename=os.path.basename(STOCK_FILE),
-            stock_updated_at=datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-            success=("อัปโหลดไฟล์ Stock สำเร็จ ระบบเปลี่ยนเป็นข้อมูลจากไฟล์ใหม่แล้ว")
+
+            "stock.html",
+
+            stock_data=new_stock_data,
+
+            stock_exists=True,
+
+            stock_filename=os.path.basename(
+                STOCK_FILE
+            ),
+
+            stock_updated_at=datetime.now().strftime(
+                "%d/%m/%Y %H:%M:%S"
+            ),
+
+            success=(
+                "อัปโหลดไฟล์ Stock สำเร็จ "
+                "ระบบเปลี่ยนเป็นข้อมูลจากไฟล์ใหม่แล้ว"
+            )
+
         )
 
+
     except Exception as e:
+
         print("")
         print("=" * 70)
         print("ERROR UPLOAD STOCK")
         print(repr(e))
         print("=" * 70)
 
+
         return render_template(
-            "stock.html", stock_data=load_stock(),
-            stock_exists=os.path.exists(STOCK_FILE),
-            stock_filename=(os.path.basename(STOCK_FILE) if os.path.exists(STOCK_FILE) else None),
-            error=("ไม่สามารถอัปโหลดไฟล์ Stock ได้: " + str(e))
+
+            "stock.html",
+
+            stock_data=load_stock(),
+
+            stock_exists=os.path.exists(
+                STOCK_FILE
+            ),
+
+            stock_filename=(
+
+                os.path.basename(
+                    STOCK_FILE
+                )
+
+                if os.path.exists(
+                    STOCK_FILE
+                )
+
+                else None
+
+            ),
+
+            error=(
+                "ไม่สามารถอัปโหลดไฟล์ Stock ได้: "
+                + str(e)
+            )
+
         )
 
+
     finally:
+
         if temp_stock_path:
+
             try:
-                if os.path.exists(temp_stock_path):
-                    os.remove(temp_stock_path)
+
+                if os.path.exists(
+                    temp_stock_path
+                ):
+
+                    os.remove(
+                        temp_stock_path
+                    )
+
             except Exception:
+
                 pass
 
 
+# ============================================================
+# INTERACTIONS
+# ============================================================
+
 @app.route("/interactions")
 def interactions():
+
     data = load_interactions()
-    return render_template("interactions.html", interactions=data)
 
 
-@app.route("/interaction-check", methods=["GET", "POST"])
+    return render_template(
+        "interactions.html",
+        interactions=data
+    )
+
+
+# ============================================================
+# INTERACTION CHECK
+# ============================================================
+
+@app.route(
+    "/interaction-check",
+    methods=["GET", "POST"]
+)
 def interaction_check():
+
     results = []
+
     drug1 = ""
+
     drug2 = ""
-    error = None
+
 
     if request.method == "POST":
-        MAX_DRUG_NAME_LEN = 100
 
-        drug1 = request.form.get("drug1", "").strip()[:MAX_DRUG_NAME_LEN]
-        drug2 = request.form.get("drug2", "").strip()[:MAX_DRUG_NAME_LEN]
+        drug1 = request.form.get(
+            "drug1",
+            ""
+        )
 
-        if not drug1 or not drug2:
-            error = "กรุณากรอกชื่อยาทั้งสองตัวให้ครบ"
-        elif drug1.lower() == drug2.lower():
-            error = "กรุณาเลือกยาสองตัวที่ไม่ซ้ำกัน"
-        else:
-            try:
-                results = check_drug_interactions([drug1, drug2])
-            except Exception as e:
-                print("ERROR interaction_check:", repr(e))
-                error = "เกิดข้อผิดพลาดระหว่างตรวจสอบ Drug Interaction: " + str(e)
 
-    return render_template("interaction_check.html", results=results, drug1=drug1, drug2=drug2, error=error)
+        drug2 = request.form.get(
+            "drug2",
+            ""
+        )
 
+
+        results = check_drug_interactions(
+            [
+                drug1,
+                drug2
+            ]
+        )
+
+
+    return render_template(
+        "interaction_check.html",
+        results=results,
+        drug1=drug1,
+        drug2=drug2
+    )
+
+
+# ============================================================
+# APPOINTMENT
+# ============================================================
 
 @app.route("/appointment")
 def appointment():
-    return render_template("appointment.html")
 
+    return render_template(
+        "appointment.html"
+    )
+
+
+# ============================================================
+# HISTORY
+# ============================================================
 
 @app.route("/history")
 def history():
+
     history_data = get_history()
-    return render_template("history.html", history=history_data)
 
 
-CLEAR_HISTORY_KEY = os.environ.get("CLEAR_HISTORY_KEY")
-
-
-@app.route("/clear-history", methods=["POST"])
-def clear_history():
-    if not CLEAR_HISTORY_KEY:
-        return jsonify({
-            "error": ("ปิดการใช้งาน /clear-history ไว้ก่อน: ยังไม่ได้ตั้งค่า CLEAR_HISTORY_KEY ใน environment")
-        }), 403
-
-    provided_key = (
-        request.form.get("admin_key")
-        or request.headers.get("X-Admin-Key")
-        or ""
+    return render_template(
+        "history.html",
+        history=history_data
     )
 
-    if provided_key != CLEAR_HISTORY_KEY:
-        print("ERROR CLEAR HISTORY: unauthorized attempt")
-        return jsonify({"error": "Unauthorized: admin key ไม่ถูกต้อง"}), 403
+
+# ============================================================
+# CLEAR HISTORY
+# TESTING ONLY
+# ============================================================
+
+@app.route(
+    "/clear-history",
+    methods=["POST"]
+)
+def clear_history():
 
     conn = get_db()
 
+
     try:
-        conn.execute("DELETE FROM medication_history")
-        conn.execute("DELETE FROM prescription_queue WHERE status = 'resolved'")
+
+        conn.execute(
+            "DELETE FROM medication_history"
+        )
+
+
+        conn.execute(
+            """
+            DELETE FROM prescription_queue
+            WHERE status = 'resolved'
+            """
+        )
+
+
         conn.commit()
 
+
     except Exception as e:
+
         conn.rollback()
-        print("ERROR CLEAR HISTORY:", repr(e))
+
+        print(
+            "ERROR CLEAR HISTORY:",
+            repr(e)
+        )
+
 
     finally:
+
         conn.close()
 
-    return redirect(url_for("history"))
 
+    return redirect(
+        url_for(
+            "history"
+        )
+    )
+
+
+# ============================================================
+# RUN
+# ============================================================
 
 if __name__ == "__main__":
+
     print("=" * 60)
-    print("Medication Management System")
-    print("Server: http://127.0.0.1:5000")
-    print("Prescription Upload:")
-    print("http://127.0.0.1:5000/prescription")
-    print("Stock:")
-    print("http://127.0.0.1:5000/stock")
+
+
+    print(
+        "Medication Management System"
+    )
+
+
+    print(
+        "Server: http://127.0.0.1:5000"
+    )
+
+
+    print(
+        "Prescription Upload:"
+    )
+
+
+    print(
+        "http://127.0.0.1:5000/prescription"
+    )
+
+
+    print(
+        "Stock:"
+    )
+
+
+    print(
+        "http://127.0.0.1:5000/stock"
+    )
+
+
     print("=" * 60)
+
 
     if __name__ == "__main__":
         app.run(debug=True, use_reloader=False)
