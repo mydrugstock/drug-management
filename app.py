@@ -690,7 +690,7 @@ def resolve_prolog_drug(name):
 
 
 # ============================================================
-# CHECK LAB RESULTS (lab_status / check_lab_adjustment ใน .pl)
+# CHECK LAB RESULTS (lab_status ใน .pl)
 # ============================================================
 # ชื่อคอลัมน์ผลแลปในไฟล์ Excel อาจตั้งไม่ตรงกับ atom ใน drug_interaction.pl
 # เช่น "eGFR", "GFR", "Creatinine", "Cr", "K+" จึงต้อง map ชื่อคอลัมน์ ->
@@ -902,9 +902,6 @@ def _format_prolog_number(value):
 # Cache: key = (lab_atom, value_str) -> {'Status', 'Description'} | None
 _PROLOG_LAB_STATUS_CACHE = {}
 
-# Cache: key = (drug_atom, lab_atom, value_str) -> {'Severity', 'Recommendation'} | None
-_PROLOG_LAB_ADJUSTMENT_CACHE = {}
-
 
 def _prolog_lab_status(lab_atom, value):
     """เรียก lab_status/4 ใน .pl หาว่าค่าแล็บนี้ สูง/ต่ำ/ปกติ"""
@@ -978,100 +975,28 @@ def _prolog_lab_status(lab_atom, value):
     return result
 
 
-def _prolog_lab_adjustment(drug_atom, lab_atom, value):
-    """เรียก check_lab_adjustment/5 ใน .pl หาคำแนะนำปรับยาตามค่าแล็บ (ถ้ามี)"""
-    value_str = _format_prolog_number(value)
-    if value_str is None:
-        return None
-
-    cache_key = (drug_atom, lab_atom, value_str)
-    if cache_key in _PROLOG_LAB_ADJUSTMENT_CACHE:
-        return _PROLOG_LAB_ADJUSTMENT_CACHE[cache_key]
-
-    if not os.path.exists(PROLOG_FILE):
-        raise FileNotFoundError(
-            "ไม่พบไฟล์ drug_interaction.pl ที่: {}".format(PROLOG_FILE)
-        )
-
-    swipl = _locate_swipl()
-
-    goal = (
-        "(check_lab_adjustment({}, {}, {}, Severity, Recommendation) -> "
-        "format('FOUND\\t~w\\t~w', [Severity, Recommendation]) ; "
-        "write('NONE')), halt(0)"
-    ).format(drug_atom, lab_atom, value_str)
-
-    print("=== SEND TO PROLOG (LAB ADJUSTMENT) ===")
-    print("Drug:", drug_atom)
-    print("Lab:", lab_atom)
-    print("Value:", value_str)
-    print("Goal:", goal)
-
-    proc = subprocess.run(
-        [swipl, "-q", "-f", "none", "-s", PROLOG_FILE, "-g", goal],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
-        cwd=BASE_DIR,
-    )
-
-    print("=== PROLOG RESULT (LAB ADJUSTMENT) ===")
-    print("Return code:", proc.returncode)
-    print("stdout:", proc.stdout.strip())
-    print("stderr:", proc.stderr.strip())
-
-    if proc.returncode != 0:
-        err = proc.stderr.strip() or proc.stdout.strip() or "(ไม่มีข้อความจาก SWI-Prolog)"
-        raise RuntimeError(
-            "SWI-Prolog error while checking lab adjustment {}/{}={}: {}".format(
-                drug_atom, lab_atom, value_str, err
-            )
-        )
-
-    output = proc.stdout.strip()
-    if output == "NONE" or not output:
-        _PROLOG_LAB_ADJUSTMENT_CACHE[cache_key] = None
-        return None
-
-    parts = output.split("\t", 2)
-    if len(parts) != 3 or parts[0] != "FOUND":
-        _PROLOG_LAB_ADJUSTMENT_CACHE[cache_key] = None
-        return None
-
-    result = {
-        "Severity": parts[1],
-        "Recommendation": parts[2],
-    }
-    _PROLOG_LAB_ADJUSTMENT_CACHE[cache_key] = result
-    return result
-
-
 def check_patient_lab_results(patient):
     """
     ตรวจสถานะผลแลป (สูง/ต่ำ/ปกติ) ของคนไข้ทุกค่าที่ map เข้ากับ atom ใน .pl ได้
-    และหาคำแนะนำปรับยา (ถ้ามี) จากคู่ ยาที่คนไข้ใช้ + ค่าแล็บของคนไข้
 
-    คืนค่า (lab_statuses, lab_adjustments) โดย lab_statuses ใช้ทำ index
-    ด้วย header เดิมของคอลัมน์ Excel เพื่อให้ template จับคู่กับ patient.labs ได้ตรงกัน
+    หมายเหตุ: ไม่แสดง "คำแนะนำปรับยา" (lab_adjustment) เพราะเป็นการให้คำแนะนำ
+    เชิงคลินิกที่อยู่นอกขอบเขตสิทธิ์ของเภสัชกร/เจ้าหน้าที่จ่ายยาในระบบนี้
+    ระบบจึงบอกแค่สถานะของค่าแล็บ ส่วนการตัดสินใจปรับยาให้เป็นดุลยพินิจแพทย์
+
+    คืนค่า lab_statuses โดยใช้ header เดิมของคอลัมน์ Excel เป็น key
+    เพื่อให้ template จับคู่กับ patient.labs ได้ตรงกัน
     """
     labs = patient.get("labs", {}) or {}
     lab_statuses = []
-    lab_adjustments = []
 
     if not labs:
-        return lab_statuses, lab_adjustments
+        return lab_statuses
 
-    resolved_labs = []
     for header, raw_value in labs.items():
         lab_atom = resolve_lab_atom(header)
         if not lab_atom:
             continue
-        resolved_labs.append((header, lab_atom, raw_value))
 
-    for header, lab_atom, raw_value in resolved_labs:
         try:
             status_data = _prolog_lab_status(lab_atom, raw_value)
         except Exception as e:
@@ -1087,32 +1012,7 @@ def check_patient_lab_results(patient):
                 "description": status_data["Description"],
             })
 
-    if resolved_labs:
-        drug_atoms = set()
-        for medicine in (patient.get("medicines", []) or []):
-            atom = resolve_prolog_drug(medicine.get("name", ""))
-            if atom:
-                drug_atoms.add(atom)
-
-        for header, lab_atom, raw_value in resolved_labs:
-            for drug_atom in sorted(drug_atoms):
-                try:
-                    adjustment = _prolog_lab_adjustment(drug_atom, lab_atom, raw_value)
-                except Exception as e:
-                    print("ERROR LAB ADJUSTMENT:", repr(e))
-                    continue
-
-                if adjustment:
-                    lab_adjustments.append({
-                        "drug": drug_atom,
-                        "lab": lab_atom,
-                        "header": header,
-                        "value": raw_value,
-                        "severity": adjustment["Severity"],
-                        "recommendation": adjustment["Recommendation"],
-                    })
-
-    return lab_statuses, lab_adjustments
+    return lab_statuses
 
 
 # ============================================================
@@ -7010,16 +6910,6 @@ th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
       {% endfor %}
       </tbody>
     </table>
-
-    {% if patient.lab_adjustments %}
-    <div style="margin-top:10px">
-    {% for a in patient.lab_adjustments %}
-      <div class="interaction {{ 'bad' if a.severity in ['danger', 'contraindicated'] else 'warn' }}">
-        ⚠️ <b>{{ a.drug }}</b> ร่วมกับ {{ a.header }} = {{ a.value }} ({{ a.severity }})<br>{{ a.recommendation }}
-      </div>
-    {% endfor %}
-    </div>
-    {% endif %}
   </div>
   {% endif %}
 
@@ -7130,11 +7020,11 @@ def _prepare_unified_result_patient(patient):
     patient = apply_stock_to_patient(patient)
     patient["stock_sufficient"] = patient_stock_is_sufficient(patient)
 
-    # ผลแลป: สถานะ (สูง/ต่ำ/ปกติ) ต่อค่าแล็บ + คำแนะนำปรับยาถ้ามี
-    # เป็นข้อมูลแสดงผลอย่างเดียว ไม่กระทบ logic การอนุมัติ/จ่ายยาเดิม
-    lab_statuses, lab_adjustments = check_patient_lab_results(patient)
+    # ผลแลป: สถานะ (สูง/ต่ำ/ปกติ) ต่อค่าแล็บ — แสดงสถานะเฉยๆ ไม่มีคำแนะนำปรับยา
+    # (อยู่นอกขอบเขตสิทธิ์ของเภสัชกร/เจ้าหน้าที่จ่ายยา) เป็นข้อมูลแสดงผลอย่างเดียว
+    # ไม่กระทบ logic การอนุมัติ/จ่ายยาเดิม
+    lab_statuses = check_patient_lab_results(patient)
     patient["lab_statuses"] = lab_statuses
-    patient["lab_adjustments"] = lab_adjustments
     patient["lab_status_by_header"] = {
         item["header"]: item for item in lab_statuses
     }
