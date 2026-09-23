@@ -1714,7 +1714,8 @@ def read_prescription_excel(
             "strength",
             "Dose",
             "dose",
-            "ขนาดยา"
+            "ขนาดยา",
+            "ขนาด"
         ]
     )
 
