@@ -689,8 +689,19 @@ def resolve_prolog_drug(name):
     return None
 
 
+# Cache ผลลัพธ์การเช็คคู่ยา key = frozenset({atom_a, atom_b})
+# กฎ interaction ใน drug_interaction.pl ไม่เปลี่ยนระหว่าง server รันอยู่
+# จึงเช็คคู่เดิมครั้งเดียวพอ ลดการเปิด subprocess swipl ซ้ำๆ ทุกครั้งที่หน้า
+# /prescription-result หรือหน้าอื่นถูกโหลด/รีเฟรชสำหรับคนไข้หลายคนที่ใช้ยาซ้ำกัน
+_PROLOG_INTERACTION_CACHE = {}
+
+
 def _prolog_query_pair(atom_a, atom_b):
     """เรียก SWI-Prolog แยก process เพื่อไม่ให้ DLL ของ PySWIP ชนกับ Flask/openpyxl"""
+    cache_key = frozenset((atom_a, atom_b))
+    if cache_key in _PROLOG_INTERACTION_CACHE:
+        return _PROLOG_INTERACTION_CACHE[cache_key]
+
     if not os.path.exists(PROLOG_FILE):
         raise FileNotFoundError(
             "ไม่พบไฟล์ drug_interaction.pl ที่: {}".format(PROLOG_FILE)
@@ -767,17 +778,21 @@ def _prolog_query_pair(atom_a, atom_b):
 
     output = proc.stdout.strip()
     if output == "NONE" or not output:
+        _PROLOG_INTERACTION_CACHE[cache_key] = None
         return None
 
     parts = output.split("\t", 3)
     if len(parts) != 4 or parts[0] != "FOUND":
+        _PROLOG_INTERACTION_CACHE[cache_key] = None
         return None
 
-    return {
+    result = {
         "Risk": parts[1],
         "Severity": parts[2],
         "Warning": parts[3],
     }
+    _PROLOG_INTERACTION_CACHE[cache_key] = result
+    return result
 
 
 def check_drug_interactions(drug_names):
