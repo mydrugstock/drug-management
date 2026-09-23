@@ -1,619 +1,139 @@
 <!DOCTYPE html>
 <html lang="th">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title>ตรวจสอบใบสั่งยา</title>
-
-    <link rel="stylesheet"
-          href="{{ url_for('static', filename='css/theme.css') }}">
-
+    <title>ผลการตรวจใบสั่งยา</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css') }}">
     <style>
-        * {
-            box-sizing: border-box;
-        }
-
-        body {
-            margin: 0;
-            font-family: "Sarabun", "Segoe UI", Tahoma, Arial, sans-serif;
-        }
-
-        .container {
-            width: 92%;
-            max-width: 1100px;
-            margin: 35px auto;
-        }
-
-        .page-title {
-            text-align: center;
-            margin-bottom: 10px;
-            color: #d7f8ff;
-            font-size: 30px;
-        }
-
-        .page-description {
-            text-align: center;
-            color: #6b7280;
-            margin-bottom: 30px;
-            line-height: 1.7;
-        }
-
-        .card {
-            background: white;
-            border-radius: 16px;
-            padding: 30px;
-            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
-            margin-bottom: 25px;
-        }
-
-        .card-title {
-            font-size: 21px;
-            font-weight: bold;
-            color: #1e3a8a;
-            margin-bottom: 8px;
-        }
-
-        .card-description {
-            color: #6b7280;
-            margin-bottom: 25px;
-        }
-
-        .upload-area {
-            border: 2px dashed #93c5fd;
-            border-radius: 14px;
-            padding: 35px 25px;
-            text-align: center;
-            background: #eff6ff;
-            transition: 0.2s;
-        }
-
-        .upload-area:hover {
-            background: #dbeafe;
-            border-color: #2563eb;
-        }
-
-        .upload-icon {
-            font-size: 55px;
-            margin-bottom: 10px;
-        }
-
-        .upload-text {
-            font-size: 18px;
-            font-weight: bold;
-            color: #1e3a8a;
-            margin-bottom: 8px;
-        }
-
-        .upload-subtext {
-            color: #6b7280;
-            font-size: 14px;
-            margin-bottom: 20px;
-        }
-
-        input[type="file"] {
-            display: block;
-            width: 100%;
-            max-width: 500px;
-            margin: 0 auto 20px auto;
-            padding: 12px;
-            background: white;
-            border: 1px solid #d1d5db;
-            border-radius: 8px;
-            cursor: pointer;
-        }
-
-        input[type="file"]:hover {
-            border-color: #2563eb;
-        }
-
-        .button-area {
-            text-align: center;
-        }
-
-        .btn {
-            border: none;
-            border-radius: 9px;
-            padding: 12px 24px;
-            font-size: 16px;
-            font-weight: bold;
-            cursor: pointer;
-            text-decoration: none;
-            display: inline-block;
-            transition: 0.2s;
-        }
-
-        .btn-primary {
-            background: #2563eb;
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: #1d4ed8;
-        }
-
-        .btn-secondary {
-            background: #64748b;
-            color: white;
-        }
-
-        .btn-secondary:hover {
-            background: #475569;
-        }
-
-        .error-box {
-            background: #fee2e2;
-            border: 1px solid #fca5a5;
-            color: #991b1b;
-            border-radius: 10px;
-            padding: 15px 18px;
-            margin-bottom: 25px;
-        }
-
-        .error-title {
-            font-weight: bold;
-            margin-bottom: 5px;
-        }
-
-        .info-box {
-            background: #eff6ff;
-            border: 1px solid #bfdbfe;
-            color: #1e40af;
-            border-radius: 10px;
-            padding: 15px 18px;
-            margin-top: 25px;
-            line-height: 1.8;
-        }
-
-        .format-box {
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 20px;
-            margin-top: 25px;
-            overflow-x: auto;
-        }
-
-        .format-title {
-            font-weight: bold;
-            color: #334155;
-            margin-bottom: 12px;
-        }
-
-        .format-table {
-            width: 100%;
-            min-width: 650px;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-
-        .format-table th,
-        .format-table td {
-            border: 1px solid #e2e8f0;
-            padding: 10px;
-            text-align: left;
-            font-size: 14px;
-        }
-
-        .format-table th {
-            background: #f1f5f9;
-            color: #334155;
-        }
-
-        .required {
-            color: #dc2626;
-            font-weight: bold;
-        }
-
-        .optional {
-            color: #64748b;
-        }
-
-        .workflow {
-            display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: 12px;
-            margin-top: 25px;
-        }
-
-        .workflow-item {
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 18px 10px;
-            text-align: center;
-        }
-
-        .workflow-number {
-            width: 35px;
-            height: 35px;
-            line-height: 35px;
-            margin: 0 auto 8px auto;
-            background: #2563eb;
-            color: white;
-            border-radius: 50%;
-            font-weight: bold;
-        }
-
-        .workflow-text {
-            font-size: 13px;
-            color: #475569;
-            line-height: 1.5;
-        }
-
-        .footer {
-            text-align: center;
-            color: #94a3b8;
-            font-size: 13px;
-            padding: 25px;
-            line-height: 1.8;
-        }
-
-        @media (max-width: 800px) {
-            .container {
-                width: 95%;
-            }
-
-            .card {
-                padding: 20px;
-            }
-
-            .page-title {
-                font-size: 25px;
-            }
-
-            .workflow {
-                grid-template-columns: 1fr;
-            }
-        }
+        body{font-family:"Sarabun","Segoe UI",Arial,sans-serif;margin:0;color:#1f2937}
+        .container{width:92%;max-width:1200px;margin:30px auto}
+        .patient-card{background:#fff;border-radius:16px;padding:25px;margin-bottom:28px;box-shadow:0 4px 18px rgba(0,0,0,.08)}
+        h1{text-align:center;color:#d7f8ff;margin-bottom:28px}.patient-header{border-bottom:1px solid #e5e7eb;padding-bottom:15px;margin-bottom:20px}
+        .meta{display:flex;gap:25px;flex-wrap:wrap;line-height:1.7}.meta strong{margin-right:5px}
+        table{width:100%;border-collapse:collapse;margin:15px 0 22px;overflow:hidden}th,td{border:1px solid #d1d5db;padding:10px;text-align:center}th{background:#eff6ff}
+        .ok{color:#16803c;font-weight:bold}.bad{color:#c62828;font-weight:bold}.warn{color:#a16207;font-weight:bold}
+        .section{margin-top:25px}.summary,.interaction-box,.no-interaction,.alert-box{border-radius:10px;padding:14px;margin:10px 0}
+        .summary{background:#f8fafc}.interaction-box{background:#fff3f3;border:2px solid #e53935}.no-interaction{background:#effaf2;border:2px solid #35a853}.alert-box{background:#fff8e1;border:1px solid #f59e0b}
+        .button-area{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.btn{display:inline-block;border:0;border-radius:9px;padding:12px 20px;font-weight:bold;text-decoration:none;cursor:pointer}.dispense{background:#16803c;color:#fff}.consult{background:#f59e0b;color:#fff}.doctor{background:#7b1fa2;color:#fff}.secondary{background:#64748b;color:#fff}
+        .empty{text-align:center;padding:45px;color:#6b7280}.lab-status{font-weight:bold}.note{font-size:13px;color:#6b7280;line-height:1.7}
+        @media(max-width:800px){table{font-size:13px}th,td{padding:7px 5px}.container{width:95%}.patient-card{padding:17px}}
     </style>
 </head>
-
 <body class="app-shell">
-
-    {% include "partials/nav.html" %}
-
-    <div class="container">
-
-        <h1 class="page-title">
-            📄 ตรวจสอบใบสั่งยา
-        </h1>
-
-        <div class="page-description">
-            อัปโหลดไฟล์ Excel เพื่อวิเคราะห์รายการยา จำนวนยา ยาตีกัน และผลแลป
-            <br>
-            หากมีคอลัมน์ eGFR, Potassium / K+, ALT, AST, Creatinine หรือ Sodium
-            ระบบจะอ่านค่าและแสดงผลว่า <strong>สูง ต่ำ หรือปกติ</strong>
-            ตามกฎจากไฟล์ Prolog
-        </div>
-
-        {% if error %}
-        <div class="error-box">
-            <div class="error-title">
-                ❌ เกิดข้อผิดพลาด
-            </div>
-
-            <div>
-                {{ error }}
-            </div>
-        </div>
-        {% endif %}
-
-        <div class="card">
-
-            <div class="card-title">
-                📥 อัปโหลดไฟล์ใบสั่งยา
-            </div>
-
-            <div class="card-description">
-                กรุณาเลือกไฟล์ Excel ที่มีข้อมูลใบสั่งยาของผู้ป่วย
-            </div>
-
-            <form
-                method="POST"
-                action="{{ url_for('prescription') }}"
-                enctype="multipart/form-data"
-            >
-
-                <div class="upload-area">
-
-                    <div class="upload-icon">
-                        📊
-                    </div>
-
-                    <div class="upload-text">
-                        เลือกไฟล์ Excel
-                    </div>
-
-                    <div class="upload-subtext">
-                        รองรับไฟล์ .xlsx และ .xlsm
-                    </div>
-
-                    <input
-                        type="file"
-                        name="file"
-                        id="file"
-                        accept=".xlsx,.xlsm"
-                        required
-                    >
-
-                    <div class="button-area">
-                        <button
-                            type="submit"
-                            class="btn btn-primary"
-                        >
-                            🔍 ตรวจสอบใบสั่งยา
-                        </button>
-                    </div>
-
-                </div>
-
-            </form>
-
-            <div class="info-box">
-
-                <strong>ℹ️ ระบบจะตรวจสอบอะไรบ้าง?</strong>
-
-                <br>
-
-                1. แยกข้อมูลผู้ป่วยตาม HN
-
-                <br>
-
-                2. แสดงรายการยาของผู้ป่วยแต่ละราย
-
-                <br>
-
-                3. คำนวณจำนวนวันที่ยาสามารถใช้ได้
-
-                <br>
-
-                4. ตรวจสอบจำนวนยาว่าเพียงพอถึงวันนัดหรือไม่
-
-                <br>
-
-                5. ตรวจสอบยาตีกันจากฐานข้อมูลของระบบ
-
-                <br>
-
-                6. อ่านค่าผลแลปจาก Excel เช่น eGFR, K+, ALT, AST,
-                Creatinine และ Sodium
-
-                <br>
-
-                7. แสดงผลแลปเป็น
-                <strong>ปกติ / สูง / ต่ำ</strong>
-
-                <br>
-
-                8. หากไม่พบปัญหา สามารถกด
-                <strong>💊 จ่ายยา</strong>
-
-                <br>
-
-                9. หากพบปัญหา สามารถเข้าสู่ขั้นตอน
-                <strong>👨‍⚕️ Consult</strong>
-                เพื่อพิจารณาต่อ
-
-            </div>
-
-        </div>
-
-        <div class="card">
-
-            <div class="card-title">
-                📋 รูปแบบไฟล์ Excel
-            </div>
-
-            <div class="card-description">
-                ไฟล์ Excel ควรมีหัวตารางตามรายการด้านล่าง
-            </div>
-
-            <div class="format-box">
-
-                <div class="format-title">
-                    คอลัมน์ที่ระบบรองรับ
-                </div>
-
-                <table class="format-table">
-
-                    <thead>
-                        <tr>
-                            <th>คอลัมน์</th>
-                            <th>ตัวอย่างข้อมูล</th>
-                            <th>สถานะ</th>
-                        </tr>
-                    </thead>
-
-                    <tbody>
-
-                        <tr>
-                            <td>HN</td>
-                            <td>12345</td>
-                            <td class="required">จำเป็น</td>
-                        </tr>
-
-                        <tr>
-                            <td>Name / Patient Name / ชื่อ</td>
-                            <td>นายทดสอบ ระบบยา</td>
-                            <td class="optional">ไม่บังคับ</td>
-                        </tr>
-
-                        <tr>
-                            <td>Age / อายุ</td>
-                            <td>55</td>
-                            <td class="optional">ไม่บังคับ</td>
-                        </tr>
-
-                        <tr>
-                            <td>Drug / Drug Name / Medicine / ชื่อยา</td>
-                            <td>Losartan</td>
-                            <td class="required">จำเป็น</td>
-                        </tr>
-
-                        <tr>
-                            <td>Strength / Dose / ขนาดยา</td>
-                            <td>50 mg</td>
-                            <td class="optional">ไม่บังคับ</td>
-                        </tr>
-
-                        <tr>
-                            <td>Times Per Day / Frequency / ครั้งต่อวัน</td>
-                            <td>1</td>
-                            <td class="required">จำเป็น</td>
-                        </tr>
-
-                        <tr>
-                            <td>Quantity / Qty / จำนวน</td>
-                            <td>30</td>
-                            <td class="required">จำเป็น</td>
-                        </tr>
-
-                        <tr>
-                            <td>Dispense Date / Date / วันที่จ่ายยา</td>
-                            <td>07/09/2026</td>
-                            <td class="optional">ไม่บังคับ</td>
-                        </tr>
-
-                        <tr>
-                            <td>Appointment Date / Appointment / วันนัด</td>
-                            <td>07/10/2026</td>
-                            <td class="optional">ไม่บังคับ</td>
-                        </tr>
-
-                        <tr>
-                            <td>eGFR / GFR / ค่า eGFR</td>
-                            <td>85</td>
-                            <td class="optional">ไม่บังคับ</td>
-                        </tr>
-
-                        <tr>
-                            <td>Potassium / K+ / โพแทสเซียม</td>
-                            <td>4.2</td>
-                            <td class="optional">ไม่บังคับ</td>
-                        </tr>
-
-                        <tr>
-                            <td>ALT / SGPT</td>
-                            <td>32</td>
-                            <td class="optional">ไม่บังคับ</td>
-                        </tr>
-
-                        <tr>
-                            <td>AST / SGOT</td>
-                            <td>30</td>
-                            <td class="optional">ไม่บังคับ</td>
-                        </tr>
-
-                        <tr>
-                            <td>Creatinine / Cr / SCr</td>
-                            <td>1.0</td>
-                            <td class="optional">ไม่บังคับ</td>
-                        </tr>
-
-                        <tr>
-                            <td>Sodium / Na+ / โซเดียม</td>
-                            <td>140</td>
-                            <td class="optional">ไม่บังคับ</td>
-                        </tr>
-
-                    </tbody>
-
-                </table>
-
-            </div>
-
-        </div>
-
-        <div class="card">
-
-            <div class="card-title">
-                🔄 ขั้นตอนการทำงาน
-            </div>
-
-            <div class="workflow">
-
-                <div class="workflow-item">
-                    <div class="workflow-number">1</div>
-                    <div class="workflow-text">
-                        อัปโหลด<br>
-                        Excel
-                    </div>
-                </div>
-
-                <div class="workflow-item">
-                    <div class="workflow-number">2</div>
-                    <div class="workflow-text">
-                        ตรวจสอบ<br>
-                        จำนวนยา
-                    </div>
-                </div>
-
-                <div class="workflow-item">
-                    <div class="workflow-number">3</div>
-                    <div class="workflow-text">
-                        ตรวจสอบ<br>
-                        ยาตีกัน
-                    </div>
-                </div>
-
-                <div class="workflow-item">
-                    <div class="workflow-number">4</div>
-                    <div class="workflow-text">
-                        อ่านผลแลป<br>
-                        สูง/ต่ำ/ปกติ
-                    </div>
-                </div>
-
-                <div class="workflow-item">
-                    <div class="workflow-number">5</div>
-                    <div class="workflow-text">
-                        จ่ายยา /<br>
-                        Consult
-                    </div>
-                </div>
-
-            </div>
-
-        </div>
-
-        <div style="text-align: center; margin-top: 20px;">
-
-            <a
-                href="{{ url_for('index') }}"
-                class="btn btn-secondary"
-            >
-                ← กลับหน้าหลัก
-            </a>
-
-        </div>
-
+{% include "partials/nav.html" %}
+<div class="container">
+    <h1>📋 ผลการตรวจใบสั่งยา</h1>
+    {% if error %}<div class="summary bad">⚠️ {{ error }}</div>{% endif %}
+
+    {% if not patients %}
+    <div class="patient-card empty">
+        <h2>ไม่พบผู้ป่วยที่รอจ่ายยา</h2>
+        <p>ผู้ป่วยอาจถูกจ่ายยาไปแล้ว หรือยังไม่ได้อัปโหลดใบสั่งยา</p>
+        <a class="btn secondary" href="{{ url_for('prescription') }}">← อัปโหลดใบสั่งยา</a>
     </div>
+    {% endif %}
 
-    <div class="footer">
+    {% for patient in patients %}
+    <div class="patient-card">
+        <div class="patient-header">
+            <h2>👤 HN: {{ patient.hn }}</h2>
+            <div class="meta">
+                <span><strong>ชื่อ:</strong>{{ patient.name or '-' }}</span>
+                <span><strong>อายุ:</strong>{{ patient.age or '-' }}</span>
+                <span><strong>วันที่จ่ายยา:</strong>{{ patient.dispense_date or '-' }}</span>
+                <span><strong>วันนัด:</strong>{{ patient.appointment_date or '-' }}</span>
+                <span><strong>จำนวนวันที่ต้องใช้:</strong>{{ patient.required_days }} วัน</span>
+            </div>
+        </div>
 
-        ระบบจัดการยาและตรวจสอบปฏิกิริยาระหว่างยา
+        <div class="section">
+            <h3>🧪 ผลแลป</h3>
+            {% if patient.lab_results %}
+            <table>
+                <thead><tr><th>รายการ</th><th>ค่าที่วัดได้</th><th>ช่วงอ้างอิง</th><th>สถานะ</th><th>คำอธิบาย</th></tr></thead>
+                <tbody>
+                {% for item in patient.lab_results %}
+                <tr>
+                    <td style="text-align:left"><strong>{{ item.label }}</strong></td>
+                    <td><strong>{{ item.value }}</strong> {{ item.unit }}</td>
+                    <td>{{ item.normal_high_display }} {{ item.unit }}</td>
+                    <td class="lab-status {{ 'ok' if item.status == 'normal' else ('bad' if item.status == 'high' else 'warn') }}">{{ item.status_th }}</td>
+                    <td style="text-align:left">{{ item.description }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% if patient.lab_adjustments %}
+            <div class="alert-box">
+                <strong>⚠️ คำแนะนำตามยาและผลแลป</strong>
+                {% for advice in patient.lab_adjustments %}
+                <p><strong>{{ advice.drug }}</strong> + {{ advice.lab }} ({{ advice.severity }})<br>{{ advice.recommendation }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% else %}
+            <div class="summary">ไม่มีข้อมูลผลแลปสำหรับผู้ป่วยรายนี้</div>
+            {% endif %}
+        </div>
 
-        <br>
+        <div class="section">
+            <h3>💊 รายการยาและ Days Supply</h3>
+            <table>
+                <thead><tr><th>ลำดับ</th><th>ชื่อยา</th><th>ขนาดยา</th><th>ครั้ง/วัน</th><th>จำนวน</th><th>ควรจ่าย</th><th>Days Supply</th><th>Stock</th></tr></thead>
+                <tbody>
+                {% for medicine in patient.medicines %}
+                <tr>
+                    <td>{{ loop.index }}</td><td style="text-align:left"><strong>{{ medicine.name }}</strong></td>
+                    <td>{{ medicine.strength or '-' }}</td><td>{{ medicine.times_per_day }}</td><td>{{ medicine.quantity }}</td>
+                    <td>{{ medicine.expected_quantity }}</td><td>{{ "%.1f"|format(medicine.days_supply) }} วัน</td>
+                    <td class="{{ 'ok' if medicine.stock_found and medicine.stock_quantity >= medicine.quantity else 'bad' }}">
+                        {% if medicine.stock_found %}{{ medicine.stock_quantity }} {{ medicine.stock_unit or '' }}{% else %}ไม่พบยา{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% for result in patient.days_check_results %}
+            <div class="summary {{ 'ok' if result.decision == 'correct' else 'bad' }}">
+                {% if result.decision == 'correct' %}✅{% else %}❌{% endif %}
+                <strong>{{ result.name }}</strong> — {{ result.status }} | ต้องใช้ {{ result.required_days }} วัน | ควรจ่าย {{ result.expected_quantity }} | จ่ายจริง {{ result.quantity }}
+            </div>
+            {% endfor %}
+        </div>
 
-        สำหรับการทดสอบและพัฒนาโครงงาน
+        <div class="section">
+            <h3>⚕️ Drug Interaction</h3>
+            {% if patient.interaction_results %}
+            <div class="interaction-box">
+                <strong>🚨 พบ Interaction {{ patient.interaction_results|length }} รายการ</strong>
+                {% for item in patient.interaction_results %}
+                <div class="summary"><strong>{{ item.Drug_1 }} ↔ {{ item.Drug_2 }}</strong><br>Risk: {{ item.Risk }} | Severity: {{ item.Severity }}<br>{{ item.Summary }}</div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="no-interaction">✅ ไม่พบข้อมูล Drug Interaction ในฐานความรู้ของระบบ</div>
+            <div class="note">ข้อความนี้ไม่ได้หมายความว่ายาทั้งหมดปลอดภัย เนื่องจากฐานข้อมูลใช้สำหรับการทดสอบระบบ</div>
+            {% endif %}
+        </div>
 
+        <div class="button-area">
+            {% if patient.non_stock_problem and not patient.consult_approved %}
+                {% if patient.days_consult_pdf %}<a class="btn consult" href="{{ url_for('download_consult', filename=patient.days_consult_pdf) }}">📄 ดาวน์โหลด Consult PDF</a>{% endif %}
+                <a class="btn doctor" href="{{ url_for('doctor_confirm', queue_id=patient.queue_id) }}">👨‍⚕️ Consult</a>
+            {% elif not patient.stock_sufficient %}
+                <span class="btn" style="background:#aaa;color:white">🚫 Stock ไม่เพียงพอ</span>
+            {% else %}
+                <form method="post" action="{{ url_for('dispense', queue_id=patient.queue_id) }}"><button class="btn dispense" type="submit">💊 จ่ายยา</button></form>
+            {% endif %}
+        </div>
     </div>
+    {% endfor %}
 
-    <script>
-        const fileInput = document.getElementById("file");
-
-        if (fileInput) {
-            fileInput.addEventListener("change", function () {
-                if (this.files.length > 0) {
-                    console.log("Selected file:", this.files[0].name);
-                }
-            });
-        }
-    </script>
-
-    <script src="{{ url_for('static', filename='js/theme.js') }}"></script>
-
+    <div class="button-area">
+        <a class="btn secondary" href="{{ url_for('prescription') }}">← อัปโหลดใบสั่งยา</a>
+        <a class="btn secondary" href="{{ url_for('history') }}">📋 ประวัติการจ่ายยา</a>
+    </div>
+</div>
 </body>
 </html>
