@@ -626,7 +626,20 @@
 
 
         <!-- ========================================= -->
-        <!-- INTERACTION FOUND -->
+        <!-- DAYS SUPPLY (จำนวนยา vs วันนัด) -->
+        <!-- ========================================= -->
+
+        {% if patient.days_check_required and not patient.consult_approved %}
+
+        <div class="test-warning">
+            ⚠️ พบรายการยาที่จำนวนไม่สัมพันธ์กับวันนัด (ขาด/เกิน) ต้องให้แพทย์หรือผู้มีอำนาจพิจารณาก่อนจ่ายยา
+        </div>
+
+        {% endif %}
+
+
+        <!-- ========================================= -->
+        <!-- INTERACTION FOUND (แสดงข้อมูลเท่านั้น ปุ่มดำเนินการอยู่ด้านล่าง) -->
         <!-- ========================================= -->
 
         {% if patient.interaction_results %}
@@ -697,6 +710,8 @@
             {% endfor %}
 
 
+            {% if not patient.consult_approved %}
+
             <!-- ===================================== -->
             <!-- TEST WARNING -->
             <!-- ===================================== -->
@@ -712,12 +727,68 @@
 
             </div>
 
+            {% else %}
 
-            <!-- ===================================== -->
-            <!-- CONSULT PDF -->
-            <!-- ===================================== -->
+            <div class="already">
+                ✅ ผ่านการ Consult แล้ว
+            </div>
 
-            <div class="button-area">
+            {% endif %}
+
+        </div>
+
+        {% else %}
+
+        <!-- ========================================= -->
+        <!-- NO INTERACTION -->
+        <!-- ========================================= -->
+
+        <div class="no-interaction">
+
+            <h3>
+                ✅ ไม่พบ Drug Interaction
+            </h3>
+
+            <p>
+                ไม่พบข้อมูล Interaction
+                ในฐานความรู้ของระบบ
+            </p>
+
+            <div class="test-warning">
+
+                ℹ️ ข้อความนี้หมายถึง
+                <strong>ไม่พบข้อมูล Interaction ในฐานความรู้ของระบบ</strong>
+                ไม่ได้หมายความว่ายาทั้งหมดปลอดภัยหรือไม่มี Interaction
+                เนื่องจากฐานข้อมูลนี้ใช้สำหรับการทดสอบระบบ
+
+            </div>
+
+        </div>
+
+        {% endif %}
+
+
+        <!-- ========================================= -->
+        <!-- ACTIONS (จุดเดียวที่ตัดสินว่าจะทำอะไรได้บ้าง) -->
+        <!-- ต้องผ่าน Consult ก่อน (interaction หรือ days-supply) -->
+        <!-- แล้วถึงจะดู Stock เป็นด่านสุดท้ายก่อนจ่ายยา -->
+        <!-- ========================================= -->
+
+        <div class="button-area">
+
+            {% if not patient.queue_id %}
+
+                <div class="already">
+                    ⚠️ ไม่พบ Queue ID ของผู้ป่วย
+                </div>
+
+            {% elif patient.non_stock_problem and not patient.consult_approved %}
+
+                <!-- ================================= -->
+                <!-- CONSULT PDF -->
+                <!-- ================================= -->
+
+                {% if patient.interaction_results %}
 
                 <form
                     action="{{ url_for('create_consult_pdf') }}"
@@ -825,12 +896,21 @@
 
                 </form>
 
+                {% elif patient.days_consult_pdf %}
+
+                <a
+                    class="btn consult"
+                    href="{{ url_for('download_consult', filename=patient.days_consult_pdf) }}"
+                >
+                    📄 ดาวน์โหลด PDF Consult
+                </a>
+
+                {% endif %}
+
 
                 <!-- ================================= -->
                 <!-- DOCTOR CONFIRM -->
                 <!-- ================================= -->
-
-                {% if patient.queue_id %}
 
                 <form
                     action="{{ url_for('doctor_confirm', queue_id=patient.queue_id) }}"
@@ -842,63 +922,26 @@
                         type="submit"
                         onclick="return confirm('เข้าสู่หน้าจำลองการยืนยันแทนแพทย์ใช่หรือไม่?');"
                     >
-                        👨‍⚕️ ยืนยันแทนแพทย์
+                        👨‍⚕️ ยืนยันแทนแพทย์ / Consult
                     </button>
 
                 </form>
 
-                {% else %}
+            {% elif not stock_ok %}
 
-                <div class="already">
-                    ⚠️ ไม่พบ Queue ID ของผู้ป่วย
-                </div>
+                <button
+                    class="btn disabled-button"
+                    type="button"
+                    disabled
+                >
+                    🚫 ไม่สามารถจ่ายยาได้ — Stock ไม่เพียงพอ
+                </button>
 
-                {% endif %}
-
-            </div>
-
-        </div>
-
-
-        <!-- ========================================= -->
-        <!-- NO INTERACTION -->
-        <!-- ========================================= -->
-
-        {% else %}
-
-        <div class="no-interaction">
-
-            <h3>
-                ✅ ไม่พบ Drug Interaction
-            </h3>
-
-            <p>
-                ไม่พบข้อมูล Interaction
-                ในฐานความรู้ของระบบ
-            </p>
-
-            <div class="test-warning">
-
-                ℹ️ ข้อความนี้หมายถึง
-                <strong>ไม่พบข้อมูล Interaction ในฐานความรู้ของระบบ</strong>
-                ไม่ได้หมายความว่ายาทั้งหมดปลอดภัยหรือไม่มี Interaction
-                เนื่องจากฐานข้อมูลนี้ใช้สำหรับการทดสอบระบบ
-
-            </div>
-
-
-            <!-- ===================================== -->
-            <!-- DISPENSE -->
-            <!-- ===================================== -->
-
-            {% if patient.queue_id %}
-
-                {% if stock_ok %}
+            {% else %}
 
                 <form
                     action="{{ url_for('dispense', queue_id=patient.queue_id) }}"
                     method="POST"
-                    style="margin-top:20px;"
                 >
 
                     <button
@@ -911,29 +954,9 @@
 
                 </form>
 
-                {% else %}
-
-                <button
-                    class="btn disabled-button"
-                    type="button"
-                    disabled
-                >
-                    🚫 ไม่สามารถจ่ายยาได้ — Stock ไม่เพียงพอ
-                </button>
-
-                {% endif %}
-
-            {% else %}
-
-                <div class="already">
-                    ⚠️ ไม่พบ Queue ID ของผู้ป่วย
-                </div>
-
             {% endif %}
 
         </div>
-
-        {% endif %}
 
     </div>
 
