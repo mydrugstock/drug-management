@@ -314,12 +314,50 @@
             padding: 15px;
             margin-top: 20px;
         }
+
+        .page-badge {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 14px;
+        }
+
+        .page-badge span {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255,255,255,0.85);
+            backdrop-filter: blur(6px);
+            border: 1px solid rgba(124,58,237,0.18);
+            padding: 6px 16px;
+            border-radius: 999px;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: #5b21b6;
+            box-shadow: 0 4px 14px rgba(88,28,135,0.08);
+        }
+
+        .page-badge .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #16a34a;
+            animation: pulseGlow2 1.8s ease-in-out infinite;
+        }
+
+        @keyframes pulseGlow2 {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.85); }
+        }
     </style>
 </head>
 
 <body>
 
 <div class="container">
+
+    <div class="page-badge">
+        <span><span class="dot"></span> ผลตรวจล่าสุดแบบเรียลไทม์</span>
+    </div>
 
     <h1>📋 ผลการตรวจใบสั่งยา</h1>
 
