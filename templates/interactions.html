@@ -10,23 +10,42 @@
 
     <title>สต๊อกความรู้ยาชนกัน</title>
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
     <style>
 
         * {
             box-sizing: border-box;
-            font-family: Arial, sans-serif;
+            font-family: 'Kanit', Arial, sans-serif;
+        }
+
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(24px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         body {
             margin: 0;
-            background: #f4f7fb;
+            background: linear-gradient(120deg, #f5f3ff, #ecfeff, #fdf4ff);
+            background-size: 300% 300%;
+            animation: gradientShift 20s ease infinite;
             color: #1f2937;
         }
 
         header {
-            background: #7c3aed;
+            background: linear-gradient(90deg, #6d28d9, #7c3aed, #06b6d4);
+            background-size: 200% 200%;
+            animation: gradientShift 8s ease infinite;
             color: white;
-            padding: 25px 40px;
+            padding: 28px 40px;
+            box-shadow: 0 4px 18px rgba(124,58,237,0.3);
         }
 
         header h1 {
@@ -44,15 +63,22 @@
             margin-bottom: 20px;
             color: #7c3aed;
             text-decoration: none;
-            font-weight: bold;
+            font-weight: 700;
+            transition: transform 0.2s;
+        }
+
+        .back:hover {
+            transform: translateX(-4px);
         }
 
         .card {
-            background: white;
-            border-radius: 16px;
+            background: rgba(255,255,255,0.92);
+            border-radius: 18px;
             padding: 25px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            box-shadow: 0 6px 22px rgba(0,0,0,0.08);
             overflow-x: auto;
+            opacity: 0;
+            animation: fadeInUp 0.5s ease forwards;
         }
 
         table {
@@ -63,6 +89,7 @@
 
         th {
             background: #f3e8ff;
+            color: #4c1d95;
             padding: 14px;
             text-align: left;
         }
@@ -73,18 +100,26 @@
             vertical-align: top;
         }
 
+        tbody tr {
+            transition: background 0.2s;
+        }
+
+        tbody tr:hover {
+            background: #f5f3ff;
+        }
+
         .risk {
-            font-weight: bold;
+            font-weight: 700;
         }
 
         .severity-major {
             color: #dc2626;
-            font-weight: bold;
+            font-weight: 700;
         }
 
         .severity-moderate {
             color: #d97706;
-            font-weight: bold;
+            font-weight: 700;
         }
 
         .empty {
