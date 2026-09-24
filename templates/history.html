@@ -31,6 +31,17 @@
             to { opacity: 1; transform: translateY(0); }
         }
 
+        @keyframes blobMove {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(30px, -20px) scale(1.1); }
+            66% { transform: translate(-20px, 20px) scale(0.95); }
+        }
+
+        @keyframes pulseDot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.85); }
+        }
+
         body {
             margin: 0;
             font-family: 'Kanit', Tahoma, sans-serif;
@@ -38,22 +49,77 @@
             background-size: 300% 300%;
             animation: gradientShift 20s ease infinite;
             color: #111827;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        body::before,
+        body::after {
+            content: "";
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(60px);
+            opacity: 0.3;
+            z-index: 0;
+            animation: blobMove 16s ease-in-out infinite;
+        }
+
+        body::before {
+            width: 340px;
+            height: 340px;
+            background: #a78bfa;
+            top: -110px;
+            left: -90px;
+        }
+
+        body::after {
+            width: 300px;
+            height: 300px;
+            background: #22d3ee;
+            bottom: -100px;
+            right: -80px;
+            animation-delay: -6s;
         }
 
         .container {
             width: 95%;
             max-width: 1200px;
             margin: 30px auto;
+            position: relative;
+            z-index: 1;
         }
 
         .header {
             background: rgba(255,255,255,0.92);
-            padding: 25px;
+            backdrop-filter: blur(6px);
+            padding: 28px;
             border-radius: 18px;
             margin-bottom: 20px;
             box-shadow: 0 6px 22px rgba(76, 29, 149, 0.10);
             opacity: 0;
             animation: fadeInUp 0.5s ease forwards;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: #f3e8ff;
+            border: 1px solid rgba(124,58,237,0.18);
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: #5b21b6;
+            margin-bottom: 12px;
+        }
+
+        .badge .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #16a34a;
+            animation: pulseDot 1.8s ease-in-out infinite;
         }
 
         .header h1 {
@@ -137,17 +203,19 @@
         .back {
             display: inline-block;
             margin-top: 20px;
-            background: linear-gradient(90deg, #374151, #1f2937);
+            background: linear-gradient(90deg, #7c3aed, #2563eb);
             color: white;
             text-decoration: none;
             padding: 12px 22px;
             border-radius: 12px;
             font-weight: 700;
-            transition: transform 0.2s;
+            box-shadow: 0 6px 16px rgba(76,29,149,0.25);
+            transition: transform 0.2s, box-shadow 0.2s;
         }
 
         .back:hover {
-            transform: translateY(-3px);
+            transform: translateY(-3px) scale(1.02);
+            box-shadow: 0 10px 22px rgba(37,99,235,0.3);
         }
 
         .empty {
@@ -165,6 +233,11 @@
 <div class="container">
 
     <div class="header">
+
+        <div class="badge">
+            <span class="dot"></span>
+            ข้อมูลอัปเดตล่าสุด
+        </div>
 
         <h1>
             📋 ประวัติการจ่ายยา
