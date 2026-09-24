@@ -9,38 +9,112 @@
 
     <title>ระบบจัดการข้อมูลยา</title>
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
     <style>
 
         * {
             box-sizing: border-box;
         }
 
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        @keyframes floaty {
+            0%, 100% { transform: translateY(0) rotate(0deg); }
+            50% { transform: translateY(-10px) rotate(-4deg); }
+        }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(28px) scale(0.97); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        @keyframes blobMove {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(30px, -20px) scale(1.1); }
+            66% { transform: translate(-20px, 20px) scale(0.95); }
+        }
+
+        @keyframes titlePop {
+            0% { opacity: 0; transform: translateY(-14px) scale(0.9); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
         body {
             margin: 0;
-            font-family: Arial, sans-serif;
-            background: #f5f7fb;
+            font-family: 'Kanit', Arial, sans-serif;
             color: #1f2937;
+            min-height: 100vh;
+            background: linear-gradient(120deg, #ede9fe, #dbeafe, #cffafe, #fce7f3);
+            background-size: 300% 300%;
+            animation: gradientShift 18s ease infinite;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        body::before,
+        body::after {
+            content: "";
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(60px);
+            opacity: 0.35;
+            z-index: 0;
+            animation: blobMove 16s ease-in-out infinite;
+        }
+
+        body::before {
+            width: 380px;
+            height: 380px;
+            background: #a78bfa;
+            top: -120px;
+            left: -100px;
+        }
+
+        body::after {
+            width: 320px;
+            height: 320px;
+            background: #22d3ee;
+            bottom: -100px;
+            right: -80px;
+            animation-delay: -6s;
         }
 
         .container {
             max-width: 1100px;
             margin: auto;
             padding: 40px 20px;
+            position: relative;
+            z-index: 1;
         }
 
         .header {
             text-align: center;
             margin-bottom: 40px;
+            animation: titlePop 0.7s ease both;
         }
 
         .header h1 {
             margin-bottom: 10px;
-            font-size: 36px;
+            font-size: 40px;
+            font-weight: 800;
+            background: linear-gradient(90deg, #7c3aed, #2563eb, #06b6d4, #7c3aed);
+            background-size: 300% auto;
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            animation: gradientShift 6s linear infinite;
         }
 
         .header p {
-            color: #6b7280;
+            color: #6b46a5;
             font-size: 18px;
+            font-weight: 500;
         }
 
         .menu {
@@ -51,28 +125,56 @@
 
         .card {
             display: block;
-            background: white;
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(6px);
             padding: 30px;
-            border-radius: 16px;
+            border-radius: 20px;
             text-decoration: none;
             color: #1f2937;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
-            transition: 0.2s;
+            box-shadow: 0 6px 20px rgba(88, 28, 135, 0.12);
+            transition: transform 0.25s ease, box-shadow 0.25s ease;
+            border: 2px solid transparent;
+            position: relative;
+            overflow: hidden;
+            opacity: 0;
+            animation: fadeInUp 0.6s ease forwards;
         }
 
+        .card::before {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 5px;
+            background: linear-gradient(90deg, #7c3aed, #2563eb, #06b6d4);
+        }
+
+        .card:nth-child(1) { animation-delay: 0.05s; }
+        .card:nth-child(2) { animation-delay: 0.12s; }
+        .card:nth-child(3) { animation-delay: 0.19s; }
+        .card:nth-child(4) { animation-delay: 0.26s; }
+        .card:nth-child(5) { animation-delay: 0.33s; }
+        .card:nth-child(6) { animation-delay: 0.40s; }
+
         .card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 16px 32px rgba(37, 99, 235, 0.22);
+            border-color: #c4b5fd;
+        }
+
+        .card:hover .icon {
+            animation: floaty 1.4s ease-in-out infinite;
         }
 
         .icon {
             font-size: 42px;
             margin-bottom: 15px;
+            display: inline-block;
         }
 
         .card h2 {
             margin: 0 0 10px 0;
             font-size: 22px;
+            font-weight: 700;
         }
 
         .card p {
@@ -83,13 +185,15 @@
 
         .prescription {
             grid-column: span 2;
+            background: linear-gradient(135deg, rgba(124,58,237,0.10), rgba(6,182,212,0.10));
         }
 
         .footer {
             text-align: center;
             margin-top: 40px;
-            color: #9ca3af;
+            color: #7c6a9c;
             font-size: 14px;
+            font-weight: 500;
         }
 
         @media (max-width: 700px) {
