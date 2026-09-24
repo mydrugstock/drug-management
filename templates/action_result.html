@@ -7,11 +7,32 @@
 
     <title>{{ title }}</title>
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
     <style>
 
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        @keyframes popIn {
+            0% { opacity: 0; transform: scale(0.85) translateY(20px); }
+            100% { opacity: 1; transform: scale(1) translateY(0); }
+        }
+
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
         body {
-            font-family: Arial, sans-serif;
-            background: #f5f7fb;
+            font-family: 'Kanit', Arial, sans-serif;
+            background: linear-gradient(120deg, #eef2ff, #ecfeff, #fdf4ff);
+            background-size: 300% 300%;
+            animation: gradientShift 18s ease infinite;
             margin: 0;
             padding: 50px;
         }
@@ -19,29 +40,49 @@
         .card {
             max-width: 650px;
             margin: auto;
-            background: white;
+            background: rgba(255,255,255,0.95);
             padding: 40px;
-            border-radius: 18px;
+            border-radius: 22px;
             text-align: center;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            box-shadow: 0 10px 32px rgba(76, 29, 149, 0.15);
+            animation: popIn 0.5s ease;
         }
 
         .success {
-            font-size: 60px;
+            font-size: 64px;
+            animation: bounce 1.6s ease-in-out infinite;
         }
 
         .error {
-            font-size: 60px;
+            font-size: 64px;
+            animation: bounce 1.6s ease-in-out infinite;
+        }
+
+        h1 {
+            color: #4c1d95;
+            font-weight: 800;
+        }
+
+        p {
+            color: #6b6392;
+            line-height: 1.7;
         }
 
         a {
             display: inline-block;
-            margin-top: 25px;
-            padding: 12px 20px;
-            background: #555;
+            margin-top: 15px;
+            padding: 12px 24px;
+            background: linear-gradient(90deg, #4c1d95, #2563eb);
             color: white;
             text-decoration: none;
-            border-radius: 10px;
+            border-radius: 12px;
+            font-weight: 700;
+            box-shadow: 0 6px 16px rgba(76,29,149,0.3);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        a:hover {
+            transform: translateY(-3px) scale(1.03);
         }
 
     </style>
