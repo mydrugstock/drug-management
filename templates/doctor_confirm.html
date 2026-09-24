@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="th">
 
@@ -10,15 +9,36 @@
 
     <title>ยืนยันแทนแพทย์</title>
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
     <style>
 
         * {
             box-sizing: border-box;
         }
 
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(24px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.3); }
+            50% { box-shadow: 0 0 0 8px rgba(220,38,38,0); }
+        }
+
         body {
-            font-family: Arial, sans-serif;
-            background: #f5f7fb;
+            font-family: 'Kanit', Arial, sans-serif;
+            background: linear-gradient(120deg, #eef2ff, #ecfeff, #fdf4ff);
+            background-size: 300% 300%;
+            animation: gradientShift 20s ease infinite;
             margin: 0;
             padding: 30px;
             color: #333;
@@ -30,18 +50,29 @@
         }
 
         .card {
-            background: white;
+            background: rgba(255,255,255,0.92);
             padding: 30px;
-            border-radius: 16px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            border-radius: 20px;
+            box-shadow: 0 6px 24px rgba(76, 29, 149, 0.12);
+            opacity: 0;
+            animation: fadeInUp 0.6s ease forwards;
         }
 
         h1 {
             margin-top: 0;
+            font-size: 30px;
+            font-weight: 800;
+            background: linear-gradient(90deg, #7c3aed, #2563eb, #06b6d4);
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            animation: gradientShift 6s linear infinite;
         }
 
         h2 {
             margin-top: 30px;
+            color: #4c1d95;
         }
 
         h3 {
@@ -49,11 +80,12 @@
         }
 
         .warning {
-            background: #fff3f3;
+            background: linear-gradient(135deg, #fff3f3, #fff7ed);
             border: 2px solid #e53935;
             padding: 20px;
-            border-radius: 12px;
+            border-radius: 14px;
             margin-bottom: 25px;
+            animation: pulseGlow 2.6s infinite;
         }
 
         .warning strong {
@@ -64,7 +96,7 @@
             background: #f7f9fc;
             border: 1px solid #e0e0e0;
             padding: 20px;
-            border-radius: 12px;
+            border-radius: 14px;
             margin-bottom: 25px;
         }
 
@@ -73,10 +105,16 @@
         }
 
         .option {
-            border: 1px solid #ddd;
-            border-radius: 12px;
+            border: 1px solid #e5e0f7;
+            border-radius: 14px;
             padding: 20px;
             margin-bottom: 15px;
+            transition: transform 0.25s, box-shadow 0.25s;
+        }
+
+        .option:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 18px rgba(76,29,149,0.10);
         }
 
         .interaction {
@@ -88,36 +126,46 @@
             background: #fafafa;
             border: 1px solid #e0e0e0;
             padding: 12px;
-            border-radius: 8px;
+            border-radius: 10px;
             margin-bottom: 8px;
+            transition: transform 0.2s;
+        }
+
+        .medicine-item:hover {
+            transform: translateX(4px);
         }
 
         button {
-            padding: 12px 20px;
+            padding: 13px 22px;
             border: none;
-            border-radius: 10px;
+            border-radius: 12px;
             cursor: pointer;
             font-size: 16px;
-            font-weight: bold;
+            font-weight: 700;
+            transition: transform 0.2s, box-shadow 0.2s;
         }
 
         button:hover {
-            opacity: 0.9;
+            transform: translateY(-3px) scale(1.03);
+            opacity: 0.95;
         }
 
         .green {
-            background: #16803c;
+            background: linear-gradient(90deg, #16803c, #22c55e);
             color: white;
+            box-shadow: 0 6px 16px rgba(22,128,60,0.35);
         }
 
         .purple {
-            background: #7b1fa2;
+            background: linear-gradient(90deg, #7b1fa2, #a855f7);
             color: white;
+            box-shadow: 0 6px 16px rgba(123,31,162,0.35);
         }
 
         .red {
-            background: #c62828;
+            background: linear-gradient(90deg, #c62828, #ef4444);
             color: white;
+            box-shadow: 0 6px 16px rgba(198,40,40,0.35);
         }
 
         select {
@@ -126,52 +174,54 @@
             font-size: 16px;
             margin: 10px 0 15px;
             border: 1px solid #ccc;
-            border-radius: 8px;
+            border-radius: 10px;
         }
 
         .error {
             background: #ffebee;
             color: #c62828;
             padding: 15px;
-            border-radius: 10px;
+            border-radius: 12px;
             margin-bottom: 20px;
             border: 1px solid #ef9a9a;
-            font-weight: bold;
+            font-weight: 700;
         }
 
         .back-link {
             display: inline-block;
             margin-top: 20px;
             text-decoration: none;
-            color: #1976d2;
-            font-weight: bold;
+            color: #2563eb;
+            font-weight: 700;
+            transition: transform 0.2s;
         }
 
         .back-link:hover {
             text-decoration: underline;
+            transform: translateX(-4px);
         }
 
         .danger-text {
             color: #c62828;
-            font-weight: bold;
+            font-weight: 700;
         }
 
         .stock-box {
             background: #eef6ff;
             border: 1px solid #90caf9;
             padding: 15px;
-            border-radius: 10px;
+            border-radius: 12px;
             margin-top: 20px;
         }
 
         .stock-ok {
             color: #16803c;
-            font-weight: bold;
+            font-weight: 700;
         }
 
         .stock-bad {
             color: #c62828;
-            font-weight: bold;
+            font-weight: 700;
         }
 
     </style>
@@ -563,4 +613,3 @@ function checkSubstitute() {
 
 </body>
 </html>
-```
