@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="th">
 <head>
@@ -7,31 +6,68 @@
 
     <title>ตรวจสอบใบสั่งยา</title>
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
     <style>
         * {
             box-sizing: border-box;
         }
 
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(24px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes floaty {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-6px); }
+        }
+
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(124,58,237,0.35); }
+            50% { box-shadow: 0 0 0 8px rgba(124,58,237,0); }
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-4px); }
+            75% { transform: translateX(4px); }
+        }
+
         body {
             margin: 0;
-            font-family: "Segoe UI", Tahoma, Arial, sans-serif;
-            background: #f4f7fb;
+            font-family: 'Kanit', "Segoe UI", Tahoma, Arial, sans-serif;
+            background: linear-gradient(120deg, #eef2ff, #ecfeff, #fdf4ff);
+            background-size: 300% 300%;
+            animation: gradientShift 20s ease infinite;
             color: #1f2937;
         }
 
         .navbar {
-            background: #1e3a8a;
+            background: linear-gradient(90deg, #4c1d95, #1e3a8a, #0e7490);
+            background-size: 200% 200%;
+            animation: gradientShift 10s ease infinite;
             color: white;
             padding: 16px 30px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+            box-shadow: 0 4px 16px rgba(30, 58, 138, 0.25);
+            position: sticky;
+            top: 0;
+            z-index: 50;
         }
 
         .navbar-title {
             font-size: 22px;
-            font-weight: bold;
+            font-weight: 700;
         }
 
         .navbar-links {
@@ -45,12 +81,14 @@
             text-decoration: none;
             padding: 8px 14px;
             border-radius: 8px;
-            transition: 0.2s;
+            transition: 0.25s;
             font-size: 14px;
+            font-weight: 500;
         }
 
         .navbar-links a:hover {
-            background: rgba(255, 255, 255, 0.15);
+            background: rgba(255, 255, 255, 0.22);
+            transform: translateY(-2px);
         }
 
         .container {
@@ -62,59 +100,83 @@
         .page-title {
             text-align: center;
             margin-bottom: 10px;
-            color: #1e3a8a;
-            font-size: 30px;
+            font-size: 32px;
+            font-weight: 800;
+            background: linear-gradient(90deg, #7c3aed, #2563eb, #06b6d4);
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            animation: gradientShift 6s linear infinite;
         }
 
         .page-description {
             text-align: center;
-            color: #6b7280;
+            color: #6b6392;
             margin-bottom: 30px;
+            font-weight: 500;
         }
 
         .card {
-            background: white;
-            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(4px);
+            border-radius: 18px;
             padding: 30px;
-            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
+            box-shadow: 0 6px 22px rgba(76, 29, 149, 0.10);
             margin-bottom: 25px;
+            opacity: 0;
+            animation: fadeInUp 0.6s ease forwards;
+            border: 2px solid transparent;
+            transition: box-shadow 0.25s, transform 0.25s, border-color 0.25s;
         }
+
+        .card:hover {
+            box-shadow: 0 12px 28px rgba(37, 99, 235, 0.16);
+            border-color: #ddd6fe;
+        }
+
+        .card:nth-of-type(1) { animation-delay: 0.05s; }
+        .card:nth-of-type(2) { animation-delay: 0.15s; }
+        .card:nth-of-type(3) { animation-delay: 0.25s; }
 
         .card-title {
             font-size: 21px;
-            font-weight: bold;
-            color: #1e3a8a;
+            font-weight: 700;
+            color: #4c1d95;
             margin-bottom: 8px;
         }
 
         .card-description {
-            color: #6b7280;
+            color: #6b6392;
             margin-bottom: 25px;
         }
 
         .upload-area {
-            border: 2px dashed #93c5fd;
-            border-radius: 14px;
+            border: 2px dashed #a5b4fc;
+            border-radius: 16px;
             padding: 35px 25px;
             text-align: center;
-            background: #eff6ff;
-            transition: 0.2s;
+            background: linear-gradient(135deg, #eef2ff, #ecfeff);
+            transition: 0.25s;
         }
 
         .upload-area:hover {
-            background: #dbeafe;
-            border-color: #2563eb;
+            background: linear-gradient(135deg, #e0e7ff, #cffafe);
+            border-color: #6366f1;
+            transform: scale(1.01);
         }
 
         .upload-icon {
             font-size: 55px;
             margin-bottom: 10px;
+            display: inline-block;
+            animation: floaty 2.4s ease-in-out infinite;
         }
 
         .upload-text {
             font-size: 18px;
-            font-weight: bold;
-            color: #1e3a8a;
+            font-weight: 700;
+            color: #4c1d95;
             margin-bottom: 8px;
         }
 
@@ -134,10 +196,11 @@
             border: 1px solid #d1d5db;
             border-radius: 8px;
             cursor: pointer;
+            transition: 0.2s;
         }
 
         input[type="file"]:hover {
-            border-color: #2563eb;
+            border-color: #6366f1;
         }
 
         .button-area {
@@ -146,53 +209,59 @@
 
         .btn {
             border: none;
-            border-radius: 9px;
-            padding: 12px 24px;
+            border-radius: 10px;
+            padding: 13px 26px;
             font-size: 16px;
-            font-weight: bold;
+            font-weight: 700;
             cursor: pointer;
             text-decoration: none;
             display: inline-block;
-            transition: 0.2s;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-3px) scale(1.03);
+        }
+
+        .btn:active {
+            transform: translateY(0) scale(0.98);
         }
 
         .btn-primary {
-            background: #2563eb;
+            background: linear-gradient(90deg, #7c3aed, #2563eb);
             color: white;
+            box-shadow: 0 6px 16px rgba(124, 58, 237, 0.35);
         }
 
         .btn-primary:hover {
-            background: #1d4ed8;
+            box-shadow: 0 10px 22px rgba(37, 99, 235, 0.45);
         }
 
         .btn-secondary {
-            background: #64748b;
+            background: linear-gradient(90deg, #64748b, #475569);
             color: white;
-        }
-
-        .btn-secondary:hover {
-            background: #475569;
         }
 
         .error-box {
             background: #fee2e2;
             border: 1px solid #fca5a5;
             color: #991b1b;
-            border-radius: 10px;
+            border-radius: 12px;
             padding: 15px 18px;
             margin-bottom: 25px;
+            animation: shake 0.5s ease;
         }
 
         .error-title {
-            font-weight: bold;
+            font-weight: 700;
             margin-bottom: 5px;
         }
 
         .info-box {
-            background: #eff6ff;
+            background: linear-gradient(135deg, #eff6ff, #ecfeff);
             border: 1px solid #bfdbfe;
             color: #1e40af;
-            border-radius: 10px;
+            border-radius: 12px;
             padding: 15px 18px;
             margin-top: 25px;
             line-height: 1.7;
@@ -201,13 +270,13 @@
         .format-box {
             background: #f8fafc;
             border: 1px solid #e2e8f0;
-            border-radius: 12px;
+            border-radius: 14px;
             padding: 20px;
             margin-top: 25px;
         }
 
         .format-title {
-            font-weight: bold;
+            font-weight: 700;
             color: #334155;
             margin-bottom: 12px;
         }
@@ -227,13 +296,17 @@
         }
 
         .format-table th {
-            background: #f1f5f9;
-            color: #334155;
+            background: #ede9fe;
+            color: #4c1d95;
+        }
+
+        .format-table tr:hover td {
+            background: #f5f3ff;
         }
 
         .required {
             color: #dc2626;
-            font-weight: bold;
+            font-weight: 700;
         }
 
         .optional {
@@ -248,11 +321,16 @@
         }
 
         .workflow-item {
-            background: #f8fafc;
+            background: linear-gradient(135deg, #f8fafc, #eef2ff);
             border: 1px solid #e2e8f0;
-            border-radius: 12px;
+            border-radius: 14px;
             padding: 18px 10px;
             text-align: center;
+            transition: transform 0.25s;
+        }
+
+        .workflow-item:hover {
+            transform: translateY(-4px);
         }
 
         .workflow-number {
@@ -260,10 +338,11 @@
             height: 35px;
             line-height: 35px;
             margin: 0 auto 8px auto;
-            background: #2563eb;
+            background: linear-gradient(135deg, #7c3aed, #06b6d4);
             color: white;
             border-radius: 50%;
-            font-weight: bold;
+            font-weight: 700;
+            animation: pulseGlow 2.4s infinite;
         }
 
         .workflow-text {
@@ -274,7 +353,7 @@
 
         .footer {
             text-align: center;
-            color: #94a3b8;
+            color: #9083b8;
             font-size: 13px;
             padding: 25px;
         }
@@ -742,4 +821,3 @@
 
 </body>
 </html>
-```
