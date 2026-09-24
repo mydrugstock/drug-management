@@ -31,6 +31,12 @@
             50% { transform: scale(1.15); }
         }
 
+        @keyframes blobMove {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(30px, -20px) scale(1.1); }
+            66% { transform: translate(-20px, 20px) scale(0.95); }
+        }
+
         body {
             font-family: 'Kanit', Arial, sans-serif;
             background: linear-gradient(120deg, #ecfdf5, #eef2ff, #ecfeff);
@@ -38,17 +44,59 @@
             animation: gradientShift 18s ease infinite;
             padding: 40px;
             margin: 0;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        body::before,
+        body::after {
+            content: "";
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(60px);
+            opacity: 0.3;
+            z-index: 0;
+            animation: blobMove 16s ease-in-out infinite;
+        }
+
+        body::before {
+            width: 320px;
+            height: 320px;
+            background: #6ee7b7;
+            top: -100px;
+            left: -90px;
+        }
+
+        body::after {
+            width: 300px;
+            height: 300px;
+            background: #a78bfa;
+            bottom: -100px;
+            right: -80px;
+            animation-delay: -6s;
         }
 
         .box {
             max-width: 650px;
             margin: auto;
             background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(6px);
             padding: 40px;
             border-radius: 22px;
             text-align: center;
             box-shadow: 0 10px 32px rgba(16,185,129,0.15);
             animation: popIn 0.5s ease;
+            position: relative;
+            z-index: 1;
+            overflow: hidden;
+        }
+
+        .box::before {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 5px;
+            background: linear-gradient(90deg, #16a34a, #2563eb, #06b6d4);
         }
 
         .success {
@@ -111,7 +159,7 @@
         สำหรับส่งให้แพทย์เรียบร้อยแล้ว
     </p>
 
-    <p>
+    <p style="background:#f8fafc;border-radius:10px;padding:10px 14px;display:inline-block;">
         ไฟล์:
         <strong>
             {{ filename }}
