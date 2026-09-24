@@ -27,7 +27,8 @@ from flask import (
     redirect,
     url_for,
     send_from_directory,
-    jsonify
+    jsonify,
+    render_template_string
 )
 
 from openpyxl import load_workbook
@@ -5432,97 +5433,6 @@ def download_consult(filename):
 
 
 # ============================================================
-# CREATE CONSULT PDF (จากฟอร์มในหน้าผลการตรวจ - templates/prescription_result.html)
-# ============================================================
-# เดิมหน้าเทมเพลตนี้โพสต์ฟอร์มมาที่ endpoint นี้ แต่ app.py ไม่เคยมี route
-# ให้เลย (กดปุ่ม "สร้าง Consult PDF" แล้วจะ error ทันที) จึงเพิ่ม route
-# กลับเข้ามาให้ตรงกับฟิลด์ hidden input ที่เทมเพลตส่งมา
-
-@app.route(
-    "/create-consult-pdf",
-    methods=["POST"]
-)
-def create_consult_pdf():
-
-    hn = request.form.get("hn", "").strip()
-    patient_name = request.form.get("patient_name", "").strip()
-    age = request.form.get("age", "").strip()
-    dispense_date = request.form.get("dispense_date", "").strip()
-    appointment_date = request.form.get("appointment_date", "").strip()
-
-    try:
-        medication_count = int(
-            request.form.get("medication_count", 0) or 0
-        )
-    except Exception:
-        medication_count = 0
-
-    medicines = []
-
-    for i in range(medication_count):
-
-        name = request.form.get(
-            "med_name_{}".format(i), ""
-        ).strip()
-
-        if not name:
-            continue
-
-        medicines.append({
-            "name": name,
-            "strength": request.form.get(
-                "med_strength_{}".format(i), ""
-            ),
-            "times_per_day": request.form.get(
-                "med_frequency_{}".format(i), ""
-            ),
-            "quantity": request.form.get(
-                "med_quantity_{}".format(i), 0
-            ),
-        })
-
-    if not medicines:
-
-        return redirect(
-            url_for(
-                "prescription_result",
-                error="ไม่พบรายการยาสำหรับสร้าง Consult PDF"
-            )
-        )
-
-    patient = {
-        "hn": hn,
-        "name": patient_name,
-        "age": age,
-        "dispense_date": dispense_date,
-        "appointment_date": appointment_date,
-        "required_days": calculate_days_between(
-            dispense_date,
-            appointment_date
-        ),
-        "medicines": medicines,
-    }
-
-    filename = create_days_supply_consult_pdf(patient)
-
-    if not filename:
-
-        return redirect(
-            url_for(
-                "prescription_result",
-                error="ไม่สามารถสร้าง Consult PDF ได้"
-            )
-        )
-
-    return redirect(
-        url_for(
-            "download_consult",
-            filename=filename
-        )
-    )
-
-
-# ============================================================
 # PRESCRIPTION UPLOAD
 # ============================================================
 
@@ -5820,8 +5730,169 @@ def add_patient_to_queue(
 # ============================================================
 
 
+# ============================================================
+# NEW UNIFIED PRESCRIPTION RESULT PAGE
+# ============================================================
+
+UNIFIED_RESULT_TEMPLATE = r"""
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ผลการตรวจใบสั่งยา</title>
+<style>
+body{font-family:Arial,'Noto Sans Thai',sans-serif;background:#f4f7fb;margin:0;color:#1f2937}
+.wrap{max-width:1200px;margin:28px auto;padding:0 16px}
+.card{background:#fff;border-radius:16px;box-shadow:0 4px 18px rgba(0,0,0,.08);padding:22px;margin-bottom:24px}
+h1{margin:0 0 6px}.hn{color:#2563eb;font-size:22px;font-weight:700}
+.meta{display:flex;gap:28px;flex-wrap:wrap;margin:18px 0;font-size:16px}
+.meta b{display:block;margin-top:4px}
+table{width:100%;border-collapse:collapse;margin:10px 0 18px;background:#fff}
+th,td{border:1px solid #e5e7eb;padding:11px 9px;text-align:center;vertical-align:middle}
+th{background:#f8fafc;font-weight:700}td.drug{text-align:left;font-weight:700}
+.ok{color:#15803d;font-weight:700}.bad{color:#dc2626;font-weight:700}.warn{color:#b45309;font-weight:700}
+.section{margin-top:22px}.section h3{margin:0 0 10px}
+.summary{padding:13px 15px;border-radius:10px;background:#f8fafc;margin-bottom:12px}
+.interaction{padding:12px 14px;border-radius:10px;background:#fff7ed;border:1px solid #fed7aa;margin:8px 0}
+.actions{text-align:center;margin-top:22px;padding-top:18px;border-top:1px solid #e5e7eb}
+.btn{display:inline-block;border:0;border-radius:10px;padding:13px 28px;font-size:17px;font-weight:700;cursor:pointer;text-decoration:none;margin:4px}
+.btn-dispense{background:#16a34a;color:white}.btn-consult{background:#f59e0b;color:white}.btn-disabled{background:#9ca3af;color:white;cursor:not-allowed}
+.alert{padding:13px 15px;border-radius:10px;margin-bottom:15px;background:#fee2e2;color:#991b1b;font-weight:700}
+.note{font-size:13px;color:#6b7280;line-height:1.6}
+@media(max-width:800px){table{font-size:13px}th,td{padding:7px 5px}.meta{gap:14px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>🔎 ผลการตรวจใบสั่งยา</h1>
+{% if error %}<div class="alert">{{ error }}</div>{% endif %}
+{% for patient in patients %}
+<div class="card">
+  <div class="hn">HN {{ patient.hn }}</div>
+  <div>{{ patient.name or '' }}</div>
+  <div class="meta">
+    <div>📅 วันที่จ่ายยา<b>{{ patient.dispense_date }}</b></div>
+    <div>📅 วันนัด<b>{{ patient.appointment_date }}</b></div>
+    <div>📆 จำนวนวันที่ต้องใช้<b>{{ patient.required_days }} วัน</b></div>
+  </div>
+
+  {% if patient.labs %}
+  <div class="section">
+    <h3>🧪 ผลแลป</h3>
+    <table>
+      <thead><tr><th>รายการ</th><th>ค่า</th><th>สถานะ</th></tr></thead>
+      <tbody>
+      {% for lab_name, lab_value in patient.labs.items() %}
+      {% set s = patient.lab_status_by_header.get(lab_name) if patient.lab_status_by_header else none %}
+      <tr>
+        <td class="drug">{{ lab_name }}</td>
+        <td>{{ lab_value }}</td>
+        <td class="{{ 'bad' if s and s.status in ['high', 'low'] else ('ok' if s else '') }}">
+          {% if s %}
+            {% if s.status == 'high' %}🔺 สูง{% elif s.status == 'low' %}🔻 ต่ำ{% else %}✓ ปกติ{% endif %}
+            — {{ s.description }}
+          {% else %}
+            -
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="section">
+    <h3>💊 รายการยา</h3>
+    <table>
+      <thead><tr>
+        <th>ลำดับ</th><th>ชื่อยา</th><th>ขนาดยา</th><th>ครั้ง/วัน</th>
+        <th>จำนวนที่สั่งจ่าย</th><th>จำนวนที่ต้องจ่ายจริง</th>
+        <th>Stock ปัจจุบัน</th><th>สถานะ Stock</th><th>ผลตรวจ</th>
+      </tr></thead>
+      <tbody>
+      {% for m in patient.medicines %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td class="drug">{{ m.name }}</td>
+        <td>{{ m.strength or '-' }}</td>
+        <td>{{ m.times_per_day }}</td>
+        <td>{{ m.quantity }}</td>
+        <td class="{{ 'bad' if (m.quantity|float) < (m.expected_quantity|float) else 'ok' }}">{{ m.expected_quantity }}</td>
+        <td><b>{{ m.stock_quantity|default(0) }}</b> {{ m.stock_unit or '' }}</td>
+        <td class="{{ 'ok' if m.stock_found and m.stock_status == 'มีเพียงพอ' else 'bad' }}">
+          {% if m.stock_found and m.stock_status == 'มีเพียงพอ' %}✓ มีเพียงพอ{% else %}✗ ไม่เพียงพอ{% endif %}
+        </td>
+        <td class="{{ 'ok' if m.days_match else 'bad' }}">
+          {% if m.days_match %}✓ สัมพันธ์{% else %}✗ {{ m.days_check_status }}{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <h3>📦 สรุป Stock</h3>
+    {% if patient.stock_sufficient %}
+      <div class="summary ok">✓ ยาทุกรายการมีใน Stock และมีจำนวนเพียงพอ</div>
+    {% else %}
+      <div class="summary bad">✗ มีรายการยาที่ Stock ไม่เพียงพอ</div>
+      {% for m in patient.medicines if not (m.stock_found and m.stock_status == 'มีเพียงพอ') %}
+        <div class="summary bad"><b>{{ m.name }}</b> — ต้องใช้ {{ m.quantity }} {{ m.stock_unit or 'หน่วย' }}, มีในคลัง {{ m.stock_quantity|default(0) }}, ขาด {{ ((m.quantity|float)-(m.stock_quantity|float))|round(2) if (m.quantity|float)>(m.stock_quantity|float) else 0 }}</div>
+      {% endfor %}
+    {% endif %}
+  </div>
+
+  <div class="section">
+    <h3>📆 Days Supply</h3>
+    {% for r in patient.days_check_results %}
+      <div class="summary {{ 'ok' if r.decision == 'correct' else 'bad' }}">
+        {% if r.decision == 'correct' %}✅{% else %}❌{% endif %}
+        <b>{{ r.name }}</b> — {{ r.status }} | ต้องใช้ {{ r.required_days }} วัน | ควรจ่าย {{ r.expected_quantity }} | จ่ายจริง {{ r.quantity }}
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="section">
+    <h3>⚕️ Drug Interaction</h3>
+    {% if patient.interaction_results %}
+      {% for x in patient.interaction_results %}
+      <div class="interaction bad">❌ <b>{{ x.Drug_1 }}</b> ↔ <b>{{ x.Drug_2 }}</b>{% if x.Description %}<br>{{ x.Description }}{% endif %}</div>
+      {% endfor %}
+    {% else %}
+      <div class="summary ok">✅ ไม่พบ Drug Interaction</div>
+      <div class="note">ไม่พบข้อมูล Interaction ในฐานความรู้ของระบบ<br><br>ℹ️ ข้อความนี้หมายถึง <b>ไม่พบข้อมูล Interaction ในฐานความรู้ของระบบ</b> ไม่ได้หมายความว่ายาทั้งหมดปลอดภัยหรือไม่มี Interaction เนื่องจากฐานข้อมูลนี้ใช้สำหรับการทดสอบระบบ</div>
+    {% endif %}
+  </div>
+
+  <div class="actions">
+  {% if patient.non_stock_problem and not patient.consult_approved %}
+    <div class="warn" style="margin-bottom:10px">⚠️ พบปัญหาที่ต้อง Consult</div>
+    {% if patient.days_consult_pdf %}
+      <a class="btn" style="background:#7c3aed;color:white" href="{{ url_for('download_consult', filename=patient.days_consult_pdf) }}">📄 ดาวน์โหลด PDF Consult</a>
+    {% endif %}
+    <a class="btn btn-consult" href="{{ url_for('doctor_confirm', queue_id=patient.queue_id) }}">👨‍⚕️ Consult</a>
+  {% elif not patient.stock_sufficient %}
+    <div class="bad" style="margin-bottom:10px">❌ ไม่สามารถจ่ายยาได้ เนื่องจาก Stock ไม่เพียงพอ</div>
+    <span class="btn btn-disabled">💊 จ่ายยา</span>
+  {% else %}
+    <div class="ok" style="margin-bottom:10px">✅ {{ 'ผ่านการตรวจ' if not patient.consult_approved else 'ผ่านการ Consult แล้ว' }}</div>
+    <form method="post" action="{{ url_for('dispense', queue_id=patient.queue_id) }}" style="display:inline">
+      <button class="btn btn-dispense" type="submit">💊 จ่ายยา</button>
+    </form>
+  {% endif %}
+  </div>
+</div>
+{% endfor %}
+</div>
+</body></html>
+"""
+
+
 def _prepare_unified_result_patient(patient):
-    """เตรียมข้อมูลผู้ป่วยสำหรับหน้าผลตรวจ โดยไม่เอา Stock เข้า Consult"""
+    """เตรียมข้อมูลสำหรับหน้าผลตรวจใหม่ โดยไม่เอา Stock เข้า Consult"""
     patient["labs"] = expand_bp_labs(patient.get("labs", {}))
     patient = calculate_days_check(patient)
     patient["interaction_results"] = check_patient_drug_interactions(patient)
@@ -5896,15 +5967,14 @@ def _prepare_unified_result_patient(patient):
     patient["consult_approved"] = bool(patient.get("_consult_approved", False))
     return patient
 
-
 @app.route(
     "/prescription-result"
 )
 def prescription_result():
     patients = get_pending_patients()
     patients = [_prepare_unified_result_patient(p) for p in patients]
-    return render_template(
-        "prescription_result.html",
+    return render_template_string(
+        UNIFIED_RESULT_TEMPLATE,
         patients=patients,
         error=request.args.get("error", "")
     )
