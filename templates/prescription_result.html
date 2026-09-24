@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="th">
 
@@ -6,10 +5,44 @@
     <meta charset="UTF-8">
     <title>ผลการตรวจใบสั่งยา</title>
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
     <style>
+        * { box-sizing: border-box; }
+
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(24px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.35); }
+            50% { box-shadow: 0 0 0 10px rgba(239,68,68,0); }
+        }
+
+        @keyframes pulseGreen {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.35); }
+            50% { box-shadow: 0 0 0 10px rgba(16,185,129,0); }
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-4px); }
+            75% { transform: translateX(4px); }
+        }
+
         body {
-            font-family: Arial, sans-serif;
-            background: #f5f7fb;
+            font-family: 'Kanit', Arial, sans-serif;
+            background: linear-gradient(120deg, #eef2ff, #ecfeff, #fdf4ff);
+            background-size: 300% 300%;
+            animation: gradientShift 20s ease infinite;
             margin: 0;
             padding: 30px;
             color: #222;
@@ -23,24 +56,40 @@
         h1 {
             text-align: center;
             margin-bottom: 30px;
+            font-size: 32px;
+            font-weight: 800;
+            background: linear-gradient(90deg, #7c3aed, #2563eb, #06b6d4);
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            animation: gradientShift 6s linear infinite;
         }
 
         .patient-card {
-            background: white;
-            border-radius: 16px;
+            background: rgba(255,255,255,0.92);
+            border-radius: 18px;
             padding: 25px;
             margin-bottom: 30px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            box-shadow: 0 6px 22px rgba(76, 29, 149, 0.10);
+            opacity: 0;
+            animation: fadeInUp 0.6s ease forwards;
+            transition: transform 0.25s, box-shadow 0.25s;
+        }
+
+        .patient-card:hover {
+            box-shadow: 0 12px 28px rgba(37, 99, 235, 0.16);
         }
 
         .patient-header {
-            border-bottom: 1px solid #ddd;
+            border-bottom: 2px solid #ede9fe;
             padding-bottom: 15px;
             margin-bottom: 20px;
         }
 
         .patient-header h2 {
             margin: 0 0 15px 0;
+            color: #4c1d95;
         }
 
         .patient-info {
@@ -51,43 +100,55 @@
             width: 100%;
             border-collapse: collapse;
             margin-top: 15px;
+            border-radius: 10px;
+            overflow: hidden;
         }
 
-        th,
-        td {
-            border: 1px solid #ddd;
+        th, td {
+            border: 1px solid #ede9fe;
             padding: 10px;
             text-align: center;
         }
 
         th {
-            background: #f0f2f5;
+            background: #ede9fe;
+            color: #4c1d95;
+        }
+
+        tbody tr {
+            transition: background 0.2s;
+        }
+
+        tbody tr:hover {
+            background: #f5f3ff;
         }
 
         .ok {
-            color: #16803c;
-            font-weight: bold;
+            color: #059669;
+            font-weight: 700;
         }
 
         .bad {
-            color: #c62828;
-            font-weight: bold;
+            color: #dc2626;
+            font-weight: 700;
         }
 
         .interaction-box {
-            background: #fff3f3;
-            border: 2px solid #e53935;
-            border-radius: 12px;
+            background: linear-gradient(135deg, #fff1f2, #fff7ed);
+            border: 2px solid #ef4444;
+            border-radius: 14px;
             padding: 20px;
             margin-top: 20px;
+            animation: pulseGlow 2.6s infinite;
         }
 
         .no-interaction {
-            background: #effaf2;
-            border: 2px solid #35a853;
-            border-radius: 12px;
+            background: linear-gradient(135deg, #ecfdf5, #f0fdfa);
+            border: 2px solid #10b981;
+            border-radius: 14px;
             padding: 20px;
             margin-top: 20px;
+            animation: pulseGreen 2.6s infinite;
         }
 
         .button-area {
@@ -97,45 +158,53 @@
             flex-wrap: wrap;
         }
 
-        button,
-        .btn {
+        button, .btn {
             border: none;
             border-radius: 10px;
             padding: 12px 20px;
             font-size: 16px;
+            font-weight: 700;
             cursor: pointer;
             text-decoration: none;
             display: inline-block;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover, .btn:hover {
+            transform: translateY(-3px) scale(1.03);
         }
 
         .dispense {
-            background: #16803c;
+            background: linear-gradient(90deg, #059669, #10b981);
             color: white;
+            box-shadow: 0 6px 16px rgba(16,185,129,0.35);
         }
 
         .doctor {
-            background: #7b1fa2;
+            background: linear-gradient(90deg, #7b1fa2, #a855f7);
             color: white;
+            box-shadow: 0 6px 16px rgba(123,31,162,0.35);
         }
 
         .consult {
-            background: #1565c0;
+            background: linear-gradient(90deg, #1565c0, #2563eb);
             color: white;
+            box-shadow: 0 6px 16px rgba(21,101,192,0.35);
         }
 
         .history {
-            background: #555;
+            background: linear-gradient(90deg, #475569, #64748b);
             color: white;
         }
 
         .warning {
-            color: #c62828;
-            font-weight: bold;
+            color: #dc2626;
+            font-weight: 700;
         }
 
         .already {
-            background: #eee;
-            color: #555;
+            background: #f1f5f9;
+            color: #475569;
             padding: 12px;
             border-radius: 10px;
             margin-top: 15px;
@@ -143,18 +212,19 @@
 
         .interaction-item {
             background: white;
-            border-radius: 10px;
+            border-radius: 12px;
             padding: 15px;
             margin-top: 15px;
+            border-left: 4px solid #ef4444;
         }
 
         .test-warning {
-            background: #fff8e1;
-            border: 1px solid #ffcc02;
+            background: #fffbeb;
+            border: 1px solid #f59e0b;
             border-radius: 10px;
             padding: 12px;
             margin-top: 15px;
-            color: #6d5600;
+            color: #92620a;
         }
 
         .stock-info {
@@ -165,34 +235,20 @@
             font-size: 14px;
         }
 
-        .stock-found {
-            color: #16803c;
-            font-weight: bold;
-        }
-
-        .stock-not-found {
-            color: #c62828;
-            font-weight: bold;
-        }
-
-        .stock-insufficient {
-            color: #c62828;
-            font-weight: bold;
-        }
-
-        .stock-required {
-            font-size: 13px;
-            color: #666;
-        }
+        .stock-found { color: #059669; font-weight: 700; }
+        .stock-not-found { color: #dc2626; font-weight: 700; }
+        .stock-insufficient { color: #dc2626; font-weight: 700; }
+        .stock-required { font-size: 13px; color: #666; }
 
         .error-box {
-            background: #fff0f0;
-            border: 2px solid #e53935;
-            color: #b71c1c;
-            border-radius: 12px;
+            background: #fef2f2;
+            border: 2px solid #ef4444;
+            color: #991b1b;
+            border-radius: 14px;
             padding: 15px;
             margin-bottom: 20px;
-            font-weight: bold;
+            font-weight: 700;
+            animation: shake 0.5s ease;
         }
 
         .empty {
@@ -202,16 +258,20 @@
         }
 
         .disabled-button {
-            background: #aaa;
+            background: #b0b8c4;
             color: white;
             cursor: not-allowed;
             opacity: 0.7;
         }
 
+        .disabled-button:hover {
+            transform: none;
+        }
+
         .stock-summary {
-            background: #eef6ff;
+            background: linear-gradient(135deg, #eef6ff, #ecfeff);
             border: 1px solid #90caf9;
-            border-radius: 10px;
+            border-radius: 12px;
             padding: 15px;
             margin-top: 20px;
         }
@@ -829,4 +889,3 @@
 
 </body>
 </html>
-```
